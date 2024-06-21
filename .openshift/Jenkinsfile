@@ -1,0 +1,181 @@
+pipeline {
+    agent { label 'node' }
+    options {
+        timeout(time: 45, unit: 'MINUTES')
+        disableConcurrentBuilds()
+    }
+    environment {
+        OC_PROJECT = 'prefect'
+        BASE_IMG_NAME = 'prefecthq/prefect'
+        OC_URL = 'https://c113-e.private.eu-de.containers.cloud.ibm.com:30227'
+        JIRA_URL = 'meemoo.atlassian.net'
+        APP_NAME = 'prefect-flow-arc-indexer  '
+        PREFECT_QUEUE = 'q-default'
+        REGISTRY = 'default-route-openshift-image-registry.meemoo2-2bc857e5f10eb63ab790a3a1d19a696c-i000.eu-de.containers.appdomain.cloud'
+        REGISTRY_SCHEMA = "https://$REGISTRY"
+        REGISTRY_CREDENTIAL = 'docker-reg'
+    }
+
+    stages {
+        stage('Calculate extra ENV vars') {
+            steps {
+                script {
+                    env.GIT_SHORT_COMMIT = sh(script: "printf \$(git rev-parse --short ${GIT_COMMIT})", returnStdout: true)
+                    env.IMAGE_TAG = sh(script: 'git describe --tags || echo latest', returnStdout: true)
+                    // The name used for the build config based on the image tag
+                    // Replace '.' with '_' as '.' is not allowed.
+                    env.BUILD_CONFIG_NAME = sh(script: 'echo "${IMAGE_TAG}" | sed -r "s/\\./\\-/g"', returnStdout: true)
+                    env.DOCKER_IMAGE = sh(script: 'echo "${APP_NAME}:${GIT_SHORT_COMMIT}"')
+                }
+            }
+        }
+        stage('Calculate INT ENV variables') {
+            when {
+                anyOf {
+                    changeRequest target: 'master'
+                    changeRequest target: 'main'
+                }
+            }
+            steps {
+                script {
+                    getPrefectApiAndVersion('int')
+                }
+            }
+            post {
+                always {
+                    script {
+                        env.BRANCH_NAME = env.CHANGE_BRANCH
+                    }
+                    jiraSendDeploymentInfo site: "${JIRA_URL}", environmentId: 'int', environmentName: 'int', environmentType: 'testing'
+                }
+            }
+        }
+        stage('Calculate QAS ENV variables') {
+            when {
+                anyOf { branch 'master'; branch 'main' }
+            }
+            steps {
+                script {
+                    getPrefectApiAndVersion('qas')
+                }
+            }
+            post {
+                always {
+                    jiraSendDeploymentInfo site: "${JIRA_URL}", environmentId: 'qas', environmentName: 'qas', environmentType: 'staging'
+                }
+             }
+        }
+        stage('Calculate PRD ENV variables') {
+            when {
+                buildingTag()
+            }
+            steps {
+                script {
+                    getPrefectApiAndVersion('prd')
+                }
+            }
+        }
+        stage('Test code') {
+            steps {
+                sh 'echo "No tests implemented"'
+            }
+        }
+        stage('Build and push docker') {
+            when {
+                not {
+                    buildingTag()
+                }
+            }
+            steps {
+                script {
+                    dockerImage = docker.build("$REGISTRY/prefect/$APP_NAME:$GIT_SHORT_COMMIT", "--build-arg PREFECT_VERSION=$PREFECT_VERSION .")
+                    docker.withRegistry(REGISTRY_SCHEMA, REGISTRY_CREDENTIAL) {
+                        dockerImage.push()
+                    }
+                }
+            }
+        }
+        stage('Build Python Infra Block') {
+            steps {
+                script {
+                    runInPrefectContainer("python infra_block.py --image $REGISTRY/prefect/$APP_NAME:$GIT_SHORT_COMMIT --name ${APP_NAME}-$DEPLOYMENT_ENV --registry docker-registry")
+                }
+            }
+        }
+        stage('Build and apply prefect deployment') {
+            steps {
+                script {
+                    runInPrefectContainer("prefect deployment build flows/main_flow.py:main_flow -n ${APP_NAME}-$DEPLOYMENT_ENV -ib docker-container/${APP_NAME}-$DEPLOYMENT_ENV --skip-upload -q $PREFECT_QUEUE --apply")
+                }
+            }
+            
+        }
+    }
+    post {
+        success {
+            script {
+                if (env.BRANCH_NAME.startsWith('PR')) {
+                    setGitHubBuildStatus('Build', 'SUCCESS')
+                }
+            }
+        }
+        failure {
+            script {
+                if (env.BRANCH_NAME.startsWith('PR')) {
+                    setGitHubBuildStatus('Build', 'FAILURE')
+                }
+            }
+        }
+        always {
+            jiraSendBuildInfo site: "${JIRA_URL}"
+            // Archive test results
+            script {
+                if (fileExists('./tests/test_results.xml')) {
+                    junit 'tests/test_results.xml'
+                } else {
+                    echo 'No test results found'
+                }
+            }
+        }
+    }
+}
+
+void setGitHubBuildStatus(String message, String state) {
+    step([
+        $class: 'GitHubCommitStatusSetter',
+        reposSource: [$class: 'ManuallyEnteredRepositorySource', url: "${GIT_URL}"],
+        commitShaSource: [$class: 'ManuallyEnteredShaSource', sha: "${GIT_COMMIT}"],
+        errorHandlers: [[$class: 'ChangingBuildStatusErrorHandler', result: 'UNSTABLE']],
+        statusResultSource: [ $class: 'ConditionalStatusResultSource', results: [[$class: 'AnyBuildResult', message: message, state: state]] ]
+    ])
+}
+void getPrefectApiAndVersion(String deploy_env) {
+    String prefect_api = ''
+    env.DEPLOYMENT_ENV = deploy_env
+    switch (deploy_env) {
+        case 'int':
+            env.PREFECT_API = "${PREFECT_URL_INT}"
+            break
+        case 'qas':
+            env.PREFECT_API = "${PREFECT_URL_QAS}"
+            break
+        case 'prd':
+            env.PREFECT_API = "${PREFECT_URL_PRD}"
+            break
+        default:
+            break
+    }
+    response = sh(returnStdout: true, script:"curl $PREFECT_API/admin/version").trim().split('"')
+    env.PREFECT_VERSION = response[1]
+}
+void runInPrefectContainer(String commands) {
+    println("$PREFECT_VERSION-python3.9")
+    println("$commands")
+    docker.image("${BASE_IMG_NAME}:$PREFECT_VERSION-python3.9").inside("-e PREFECT_API_URL=$PREFECT_API") {
+        sh """#!/bin/bash
+        pip3 install -r requirements.txt --extra-index-url http://do-prd-mvn-01.do.viaa.be:8081/repository/pypi-all/simple --trusted-host do-prd-mvn-01.do.viaa.be
+        unset HTTPS_PROXY HTTP_PROXY http_proxy https_proxy
+        $commands
+        """
+    }
+}
