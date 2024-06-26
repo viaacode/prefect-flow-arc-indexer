@@ -1,0 +1,3 @@
+prefect-meemoo[elasticsearch]==v0.8.1-b1
+prefect-sqlalchemy==0.2.4
+prefect==2.14.12
