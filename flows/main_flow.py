@@ -1,12 +1,12 @@
-from prefect import task, flow, get_run_logger
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 from elasticsearch import Elasticsearch
 from elasticsearch.helpers import streaming_bulk
-from prefect_sqlalchemy.credentials import DatabaseCredentials
-from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
+from prefect import flow, get_run_logger, task
 from prefect_meemoo.config.last_run import (get_last_run_config,
                                             save_last_run_config)
+from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
+from prefect_sqlalchemy.credentials import DatabaseCredentials
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 BATCH_SIZE = 1000
 
@@ -22,7 +22,7 @@ def stream_records_to_es(db_credentials, es_credentials, es_index, db_table, las
     cursor = connection.cursor(name='large_query_cursor')
     cursor.itersize = BATCH_SIZE 
     # Integrate last_modified when not None
-    cursor.execute(f"SELECT * FROM {db_table} {f"WHERE updated_at >= {last_modified}" if last_modified is not None else ""}")
+    cursor.execute(f"SELECT * FROM {db_table} {f'WHERE updated_at >= {last_modified}' if last_modified is not None else ''}")
 
     es = Elasticsearch(
         host=es_credentials.host,
