@@ -29,13 +29,12 @@ def get_postgres_connection():
     return db_conn
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
 @task
-def stream_records_to_es(db_credentials: DatabaseCredentials, es_credentials: ElasticsearchCredentials, es_index: str, db_table, last_modified = None):
+def stream_records_to_es(es_credentials: ElasticsearchCredentials, es_index: str, db_table, last_modified = None):
     logger = get_run_logger()
 
     db_conn = get_postgres_connection()
     cursor = db_conn.cursor(name='large_query_cursor')
     cursor.itersize = BATCH_SIZE
-    logger.info(BATCH_SIZE)
     cursor.execute(f"SELECT * FROM {db_table} {f'WHERE updated_at >= {last_modified}' if last_modified is not None else ''}")
 
     es = es_credentials.get_client()
@@ -47,16 +46,15 @@ def stream_records_to_es(db_credentials: DatabaseCredentials, es_credentials: El
                 "_source": dict(record)
             }
 
-    errors = []
+    errors = 0
     for ok, item in streaming_bulk(es, generate_actions()):
         if not ok:
-            errors.append(item)
+            errors += 1
+            logger.error(item)
 
-    for error in errors:
-        logger.error(error)
     cursor.close()
     db_conn.close()
-    return "Streaming records into Elasticsearch completed."
+    return f"Streaming records into Elasticsearch index: '{es_index}' completed. {errors} records failed."
 
 # Define the Prefect flow
 @flow(
@@ -81,10 +79,9 @@ def main_flow(
 
     # Load credentials
     es_credentials = ElasticsearchCredentials.load(elasticsearch_block_name)
-    db_credentials: DatabaseCredentials = DatabaseCredentials.load(db_block_name)
 
     # Init task
-    stream_task = stream_records_to_es.submit(db_credentials,es_credentials,elasticsearch_index, db_table, last_modified).result()
+    stream_task = stream_records_to_es.submit(es_credentials,elasticsearch_index, db_table, last_modified).result()
     logger.info(stream_task)
 
 # Execute the flow
