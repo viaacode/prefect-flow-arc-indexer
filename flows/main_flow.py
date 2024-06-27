@@ -29,7 +29,7 @@ def get_postgres_connection():
     return db_conn
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
 @task
-def stream_records_to_es(es_credentials: ElasticsearchCredentials, es_index: str, db_table, last_modified = None):
+def stream_records_to_es(es_credentials: ElasticsearchCredentials, es_index: str, db_table: str, db_column_es_id: str, last_modified = None):
     logger = get_run_logger()
 
     db_conn = get_postgres_connection()
@@ -43,6 +43,7 @@ def stream_records_to_es(es_credentials: ElasticsearchCredentials, es_index: str
         for record in cursor.fetchall():
             yield {
                 "_index": es_index,
+                "_id": dict(record)[db_column_es_id] if db_column_es_id else None,
                 "_source": dict(record)
             }
 
@@ -64,8 +65,9 @@ def stream_records_to_es(es_credentials: ElasticsearchCredentials, es_index: str
 def main_flow(
     db_block_name: str,
     db_table: str,
-    elasticsearch_block_name: str, 
-    elasticsearch_index: str,
+    es_block_name: str, 
+    es_index: str,
+    db_column_es_id: str= None,
     full_sync: bool = False
     ):
     """
@@ -78,10 +80,10 @@ def main_flow(
     last_modified = get_last_run_config("%Y-%m-%d") if not full_sync else None
 
     # Load credentials
-    es_credentials = ElasticsearchCredentials.load(elasticsearch_block_name)
+    es_credentials = ElasticsearchCredentials.load(es_block_name)
 
     # Init task
-    stream_task = stream_records_to_es.submit(es_credentials,elasticsearch_index, db_table, last_modified).result()
+    stream_task = stream_records_to_es.submit(es_credentials,es_index, db_table, db_column_es_id, last_modified).result()
     logger.info(stream_task)
 
 # Execute the flow
@@ -104,7 +106,8 @@ if __name__ == "__main__":
         db.save('hasura-arc')
         main_flow(
             db_block_name="hasura-arc",
-            elasticsearch_block_name="elastic-arc",
+            es_block_name="elastic-arc",
             db_table="index",
-            elasticsearch_index="arcv3"
+            es_index="arcv3",
+            db_column_es_id="id"
         )

@@ -11,8 +11,8 @@ docker run --name test-postgres -e POSTGRES_PASSWORD=mysecretpassword -d -p 5432
 
 sleep 30;
 export ELASTIC_PASSWORD="elk-password"
-docker exec -u postgres /test-postgres  bash -c "psql -c \"CREATE TABLE index (name varchar(255), function varchar(255), updated_at timestamptz DEFAULT now() NULL);\""
-docker exec -u postgres /test-postgres  bash -c "psql -c \"INSERT INTO index (name, function) VALUES ('Lennert', 'Data engineer'), ('Milan', 'Data engineer'), ('Miel', 'Data architect'), ('Bart', 'Solutions architect');\""
+docker exec -u postgres /test-postgres  bash -c "psql -c \"CREATE TABLE index (id varchar(255), name varchar(255), function varchar(255), updated_at timestamptz DEFAULT now() NULL);\""
+docker exec -u postgres /test-postgres  bash -c "psql -c \"INSERT INTO index (id, name, function) VALUES ('1', 'Lennert', 'Data engineer'), ('2', 'Milan', 'Data engineer'), ('3', 'Miel', 'Data architect'), ('4', 'Bart', 'Solutions architect');\""
 # docker exec es01 bash -c 'printf "elk-password\nelk-password" | ./bin/elasticsearch-reset-password -b -i -u elastic'
 docker exec es01 bash -c 'printf "elk-password\nelk-password" | ./bin/elasticsearch-reset-password -b -i -u elastic'
 docker cp es01:/usr/share/elasticsearch/config/certs/http_ca.crt .
