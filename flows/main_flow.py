@@ -36,25 +36,24 @@ def stream_records_to_es(db_credentials: DatabaseCredentials, es_credentials: El
     cursor = db_conn.cursor(name='large_query_cursor')
     cursor.itersize = BATCH_SIZE
     logger.info(BATCH_SIZE)
-    cursor.execute(f"SELECT name, function FROM {db_table} {f'WHERE updated_at >= {last_modified}' if last_modified is not None else ''}")
+    cursor.execute(f"SELECT * FROM {db_table} {f'WHERE updated_at >= {last_modified}' if last_modified is not None else ''}")
+
     es = es_credentials.get_client()
+
     def generate_actions():
         for record in cursor.fetchall():
-            print(record)
             yield {
                 "_index": es_index,
                 "_source": dict(record)
             }
 
-    success, failed = 0, 0
     errors = []
     for ok, item in streaming_bulk(es, generate_actions()):
         if not ok:
             errors.append(item)
-            failed += 1
-        else:
-            success += 1
-    print(errors)
+
+    for error in errors:
+        logger.error(error)
     cursor.close()
     db_conn.close()
     return "Streaming records into Elasticsearch completed."
@@ -85,7 +84,7 @@ def main_flow(
     db_credentials: DatabaseCredentials = DatabaseCredentials.load(db_block_name)
 
     # Init task
-    stream_task = stream_records_to_es.submit(db_credentials,es_credentials,elasticsearch_index, db_table, last_modified)
+    stream_task = stream_records_to_es.submit(db_credentials,es_credentials,elasticsearch_index, db_table, last_modified).result()
     logger.info(stream_task)
 
 # Execute the flow
