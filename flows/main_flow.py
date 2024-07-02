@@ -84,7 +84,6 @@ def main_flow(
     db_block_name: str,
     db_table: str,
     es_block_name: str, 
-    es_index: str,
     db_column_es_id: str = "id",
     db_column_es_index: str = "index",
     or_ids_to_run: list[str] = None,
@@ -104,7 +103,7 @@ def main_flow(
 
     # Init task
     #for or_id in or_ids_to_run:
-    stream_task = stream_records_to_es.submit(or_ids_to_run, es_credentials,es_index, db_table, db_column_es_id, db_column_es_index, last_modified).result()
+    stream_task = stream_records_to_es.submit(or_ids_to_run, es_credentials, db_table, db_column_es_id, db_column_es_index, last_modified).result()
     logger.info(stream_task)
 
 # Execute the flow
