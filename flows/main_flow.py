@@ -75,8 +75,10 @@ def stream_records_to_es(
     def generate_actions():
         for record in cursor:
             dict_record = dict(record)
+            index_name = f"{dict_record[db_column_es_index]}_{timestamp}"
+            logger.info(f"Inserting record into {index_name}")
             yield {
-                "_index": f"{dict_record[db_column_es_index]}_{timestamp}",
+                "_index": index_name,
                 "_id": (dict_record[db_column_es_id] if db_column_es_id else None),
                 "_source": dict_record["document"],
             }
