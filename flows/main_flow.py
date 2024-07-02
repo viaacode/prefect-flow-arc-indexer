@@ -7,6 +7,7 @@ from prefect_meemoo.config.last_run import get_last_run_config, save_last_run_co
 from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
 from prefect_sqlalchemy.credentials import DatabaseCredentials
 from psycopg2.extras import RealDictCursor
+from datetime import datetime
 
 BATCH_SIZE = 1000
 
@@ -68,11 +69,14 @@ def stream_records_to_es(
     # Run query
     cursor.execute(sql_query)
 
+    # Get timestamp
+    timestamp = datetime.now().isoformat()
+
     def generate_actions():
         for record in cursor:
             dict_record = dict(record)
             yield {
-                "_index": dict_record[db_column_es_index],
+                "_index": f"{dict_record[db_column_es_index]}_{timestamp}",
                 "_id": (dict_record[db_column_es_id] if db_column_es_id else None),
                 "_source": dict_record["document"],
             }
@@ -87,6 +91,25 @@ def stream_records_to_es(
 
     cursor.close()
     db_conn.close()
+
+    # Do changeover
+    for index in indexes:
+        # get index connected to alias
+        old_indexes = (
+            list(es.indices.get_alias(index).keys())
+            if es.indices.exists_alias(name=index)
+            else []
+        )
+        logger.info(old_indexes)
+        # switch alias
+        es.indices.put_alias(name=index, index=f"{index}_{timestamp}")
+
+        # delete old indexes if there are any
+        if len(old_indexes) > 0:
+            es.indices.delete_alias(name=index, index=old_indexes)
+            # if you delete an index, does it also delete the alias?
+            es.indices.delete(index=old_indexes)
+
     return f"Streaming records into Elasticsearch indexes: {indexes_list} completed. {errors} of {records} records failed."
 
 
