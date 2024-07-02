@@ -43,7 +43,9 @@ def stream_records_to_es(
     cursor = db_conn.cursor(name='large_query_cursor')
     cursor.itersize = BATCH_SIZE
     # Integrate last_modified when not None
-    sql_query = f"SELECT document FROM {db_table} WHERE index = '{or_id.lower()}' {f"AND updated_at >= {last_modified}" if last_modified is not None else ""}"
+    sql_query = f"SELECT document FROM {db_table} WHERE index = '{or_id.lower()}'"
+    if last_modified is not None:
+        sal_query += f" AND updated_at >= {last_modified}"
     cursor.execute(sql_query)
 
     es = es_credentials.get_client()
