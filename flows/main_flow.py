@@ -12,7 +12,14 @@ BATCH_SIZE = 1000
 
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
 @task
-def stream_records_to_es(db_credentials, es_credentials, es_index, db_table, last_modified = None):
+def stream_records_to_es(
+    or_id: str, 
+    db_credentials: DatabaseCredentials, 
+    es_credentials: ElasticsearchCredentials, 
+    es_index: str, 
+    db_table: str, 
+    last_modified = None):
+
     connection_str = db_credentials.get_connection_string()
     engine = create_engine(connection_str)
     Session = sessionmaker(bind=engine)
@@ -22,7 +29,7 @@ def stream_records_to_es(db_credentials, es_credentials, es_index, db_table, las
     cursor = connection.cursor(name='large_query_cursor')
     cursor.itersize = BATCH_SIZE 
     # Integrate last_modified when not None
-    cursor.execute(f"SELECT * FROM {db_table} {f"WHERE updated_at >= {last_modified}" if last_modified is not None else ""}")
+    cursor.execute(f"SELECT document FROM {db_table} WHERE index = \"{or_id.lower()}\" {f"AND updated_at >= {last_modified}" if last_modified is not None else ""}")
 
     es = Elasticsearch(
         host=es_credentials.host,
@@ -51,6 +58,7 @@ def main_flow(
     db_table: str,
     elasticsearch_block_name: str, 
     elasticsearch_index: str,
+    or_ids_to_run: list[str] = None,
     full_sync: bool = False
     ):
     """
@@ -67,7 +75,8 @@ def main_flow(
     db_credentials = DatabaseCredentials.load(db_block_name)
 
     # Init task
-    stream_task = stream_records_to_es(db_credentials,es_credentials,elasticsearch_index, db_table, last_modified)
+    for or_id in or_ids_to_run:
+        stream_task = stream_records_to_es(or_id, db_credentials,es_credentials,elasticsearch_index, db_table, last_modified)
     logger.info(stream_task)
 
 # Execute the flow
