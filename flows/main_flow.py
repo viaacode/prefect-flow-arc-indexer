@@ -35,7 +35,7 @@ def stream_records_to_es(
     es_credentials: ElasticsearchCredentials, 
     es_index: str, 
     db_table: str, 
-    db_column_es_id: str,
+    db_column_es_id: str = "id",
     last_modified = None):
     logger = get_run_logger()
 
@@ -43,7 +43,8 @@ def stream_records_to_es(
     cursor = db_conn.cursor(name='large_query_cursor')
     cursor.itersize = BATCH_SIZE
     # Integrate last_modified when not None
-    sql_query = f"SELECT document FROM {db_table} WHERE index = '{or_id.lower()}'"
+    db_column_es_id_param = f", {db_column_es_id}" if db_column_es_id else ""
+    sql_query = f"SELECT document{db_column_es_id_param} FROM {db_table} WHERE index = '{or_id.lower()}'"
     if last_modified is not None:
         sql_query += f" AND updated_at >= {last_modified}"
     cursor.execute(sql_query)
