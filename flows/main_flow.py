@@ -73,11 +73,7 @@ def stream_records_to_es(
             dict_record = dict(record)
             yield {
                 "_index": dict_record[db_column_es_index],
-                "_id": (
-                    dict_record[db_column_es_id_param]
-                    if db_column_es_id_param
-                    else None
-                ),
+                "_id": (dict_record[db_column_es_id] if db_column_es_id else None),
                 "_source": dict_record["document"],
             }
 
