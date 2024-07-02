@@ -31,22 +31,27 @@ def get_postgres_connection():
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
 @task
 def stream_records_to_es(
-    or_id: str, 
+    indexes: list[str], 
     es_credentials: ElasticsearchCredentials, 
-    es_index: str, 
     db_table: str, 
     db_column_es_id: str = "id",
+    db_column_es_index: str = "index",
     last_modified = None):
     logger = get_run_logger()
 
     db_conn = get_postgres_connection()
     cursor = db_conn.cursor(name='large_query_cursor')
     cursor.itersize = BATCH_SIZE
+
+    # Compose SQL query
+
     # Integrate last_modified when not None
+    suffix = f"AND updated_at >= {last_modified}" if last_modified else sql_query
     db_column_es_id_param = f", {db_column_es_id}" if db_column_es_id else ""
-    sql_query = f"SELECT document{db_column_es_id_param} FROM {db_table} WHERE index = '{or_id.lower()}'"
-    if last_modified is not None:
-        sql_query += f" AND updated_at >= {last_modified}"
+    sql_query = f"SELECT document,{db_column_es_index}{db_column_es_id_param} FROM {db_table} WHERE {db_column_es_index} IN ({','.join(map(lambda index: f"'{index}'", indexes))}) {suffix}"
+
+    logger.info(f'Creating cursor from query {sql_query}.')
+
     cursor.execute(sql_query)
 
     es = es_credentials.get_client()
@@ -54,7 +59,7 @@ def stream_records_to_es(
     def generate_actions():
         for record in cursor.fetchall():
             yield {
-                "_index": es_index,
+                "_index": dict(record)[db_column_es_index],
                 "_id": dict(record)[db_column_es_id] if db_column_es_id else None,
                 "_source": dict(record)
             }
@@ -67,7 +72,7 @@ def stream_records_to_es(
 
     cursor.close()
     db_conn.close()
-    return f"Streaming records into Elasticsearch index: '{es_index}' completed. {errors} records failed."
+    return f"Streaming records into Elasticsearch indexes: '{','.join(indexes)}' completed. {errors} records failed."
 
 # Define the Prefect flow
 @flow(
@@ -79,7 +84,8 @@ def main_flow(
     db_table: str,
     es_block_name: str, 
     es_index: str,
-    db_column_es_id: str= None,
+    db_column_es_id: str = "id",
+    db_column_es_index: str = "index",
     or_ids_to_run: list[str] = None,
     full_sync: bool = False
     ):
@@ -96,8 +102,8 @@ def main_flow(
     es_credentials = ElasticsearchCredentials.load(es_block_name)
 
     # Init task
-    for or_id in or_ids_to_run:
-        stream_task = stream_records_to_es.submit(or_id, es_credentials,es_index, db_table, db_column_es_id, last_modified).result()
+    #for or_id in or_ids_to_run:
+    stream_task = stream_records_to_es.submit(or_ids_to_run, es_credentials,es_index, db_table, db_column_es_id, db_column_es_index, last_modified).result()
     logger.info(stream_task)
 
 # Execute the flow
