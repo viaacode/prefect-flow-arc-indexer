@@ -74,15 +74,17 @@ def stream_records_to_es(
                 "_source": parsed["document"],
             }
 
+    records = 0
     errors = 0
     for ok, item in streaming_bulk(es, generate_actions()):
+        records += 1
         if not ok:
             errors += 1
             logger.error(item)
 
     cursor.close()
     db_conn.close()
-    return f"Streaming records into Elasticsearch indexes: '{indexes_list}' completed. {errors} records failed."
+    return f"Streaming records into Elasticsearch indexes: {indexes_list} completed. {errors} of {records} records failed."
 
 
 # Define the Prefect flow
