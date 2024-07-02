@@ -43,10 +43,6 @@ def stream_records_to_es(
 ):
     logger = get_run_logger()
 
-    db_conn = get_postgres_connection()
-    cursor = db_conn.cursor(name="large_query_cursor")
-    cursor.itersize = BATCH_SIZE
-
     # Compose SQL query
 
     # Integrate last_modified when not None
@@ -61,17 +57,23 @@ def stream_records_to_es(
 
     logger.info(f"Creating cursor from query {sql_query}.")
 
-    cursor.execute(sql_query)
-
+    # Connect to ES and Postgres
+    db_conn = get_postgres_connection()
     es = es_credentials.get_client()
 
+    # Create server-side cursor
+    cursor = db_conn.cursor(name="large_query_cursor")
+    cursor.itersize = BATCH_SIZE
+
+    # Run query
+    cursor.execute(sql_query)
+
     def generate_actions():
-        for record in cursor.fetchall():
-            parsed = dict(record)
+        for record in cursor:
             yield {
-                "_index": parsed[db_column_es_index],
-                "_id": parsed[db_column_es_id] if db_column_es_id else None,
-                "_source": parsed["document"],
+                "_index": record[1],
+                "_id": record[2] if len(record) > 2 else None,
+                "_source": record[0],
             }
 
     records = 0
