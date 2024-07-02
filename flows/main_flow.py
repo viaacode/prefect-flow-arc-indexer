@@ -70,6 +70,7 @@ def stream_records_to_es(
 
     def generate_actions():
         for record in cursor:
+            logger.info(record)
             yield {
                 "_index": record[1],
                 "_id": record[2] if len(record) > 2 else None,
