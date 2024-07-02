@@ -45,7 +45,7 @@ def stream_records_to_es(
     # Integrate last_modified when not None
     sql_query = f"SELECT document FROM {db_table} WHERE index = '{or_id.lower()}'"
     if last_modified is not None:
-        sal_query += f" AND updated_at >= {last_modified}"
+        sql_query += f" AND updated_at >= {last_modified}"
     cursor.execute(sql_query)
 
     es = es_credentials.get_client()
