@@ -72,12 +72,6 @@ def stream_records_to_es(
     # Get timestamp
     timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
 
-    # Create new indexes
-    # for index in indexes:
-    #     index_name = f"{index}_{timestamp}"
-    #     es.indices.create(index=index_name)
-    #     logger.info(f"Created index {index_name}")
-
     # Fill new indexes
     def generate_actions():
         for record in cursor:
@@ -104,7 +98,7 @@ def stream_records_to_es(
     for index in indexes:
         # get index connected to alias
         old_indexes = (
-            list(es.indices.get_alias(index).keys())
+            list(es.indices.get_alias(name=index).keys())
             if es.indices.exists_alias(name=index)
             else []
         )
