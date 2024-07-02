@@ -70,13 +70,13 @@ def stream_records_to_es(
     cursor.execute(sql_query)
 
     # Get timestamp
-    timestamp = datetime.now().isoformat()
+    timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
 
     # Create new indexes
-    for index in indexes:
-        index_name = f"{index}_{timestamp}"
-        es.indices.create(index=index_name)
-        logger.info(f"Created index {index_name}")
+    # for index in indexes:
+    #     index_name = f"{index}_{timestamp}"
+    #     es.indices.create(index=index_name)
+    #     logger.info(f"Created index {index_name}")
 
     # Fill new indexes
     def generate_actions():
