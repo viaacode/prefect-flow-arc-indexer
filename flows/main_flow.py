@@ -70,11 +70,15 @@ def stream_records_to_es(
 
     def generate_actions():
         for record in cursor:
-            logger.info(record)
+            dict_record = dict(record)
             yield {
-                "_index": record[1],
-                "_id": record[2] if len(record) > 2 else None,
-                "_source": record[0],
+                "_index": dict_record[db_column_es_index],
+                "_id": (
+                    dict_record[db_column_es_id_param]
+                    if db_column_es_id_param
+                    else None
+                ),
+                "_source": dict_record["document"],
             }
 
     records = 0
