@@ -72,11 +72,17 @@ def stream_records_to_es(
     # Get timestamp
     timestamp = datetime.now().isoformat()
 
+    # Create new indexes
+    for index in indexes:
+        index_name = f"{index}_{timestamp}"
+        es.indices.create(index=index_name)
+        logger.info(f"Created index {index_name}")
+
+    # Fill new indexes
     def generate_actions():
         for record in cursor:
             dict_record = dict(record)
             index_name = f"{dict_record[db_column_es_index]}_{timestamp}"
-            logger.info(f"Inserting record into {index_name}")
             yield {
                 "_index": index_name,
                 "_id": (dict_record[db_column_es_id] if db_column_es_id else None),
@@ -94,7 +100,7 @@ def stream_records_to_es(
     cursor.close()
     db_conn.close()
 
-    # Do changeover
+    # Do changeover from old to new indexes
     for index in indexes:
         # get index connected to alias
         old_indexes = (
@@ -102,15 +108,16 @@ def stream_records_to_es(
             if es.indices.exists_alias(name=index)
             else []
         )
-        logger.info(old_indexes)
         # switch alias
         es.indices.put_alias(name=index, index=f"{index}_{timestamp}")
 
         # delete old indexes if there are any
         if len(old_indexes) > 0:
-            es.indices.delete_alias(name=index, index=old_indexes)
+            old_indexes_seq = ",".join(old_indexes)
+            logger.info(f"Deleting old indexes {old_indexes_seq} for alias {index}")
+            es.indices.delete_alias(name=index, index=old_indexes_seq)
             # if you delete an index, does it also delete the alias?
-            es.indices.delete(index=old_indexes)
+            es.indices.delete(index=old_indexes_seq)
 
     return f"Streaming records into Elasticsearch indexes: {indexes_list} completed. {errors} of {records} records failed."
 
