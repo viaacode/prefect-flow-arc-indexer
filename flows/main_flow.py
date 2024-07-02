@@ -3,19 +3,21 @@ from elasticsearch.helpers import streaming_bulk
 from prefect import flow, get_run_logger, task
 from prefect.runtime import flow_run
 from prefect.testing.utilities import prefect_test_harness
-from prefect_meemoo.config.last_run import (get_last_run_config,
-                                            save_last_run_config)
+from prefect_meemoo.config.last_run import get_last_run_config, save_last_run_config
 from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
 from prefect_sqlalchemy.credentials import DatabaseCredentials
 from psycopg2.extras import RealDictCursor
 
 BATCH_SIZE = 1000
 
+
 def get_postgres_connection():
     """
-        Function to get a postgres connection.
+    Function to get a postgres connection.
     """
-    postgres_credentials : DatabaseCredentials = DatabaseCredentials.load(flow_run.get_parameters()["db_block_name"])
+    postgres_credentials: DatabaseCredentials = DatabaseCredentials.load(
+        flow_run.get_parameters()["db_block_name"]
+    )
     logger = get_run_logger()
     logger.info("(Re)connecting to postgres")
     db_conn = psycopg2.connect(
@@ -24,34 +26,40 @@ def get_postgres_connection():
         host=postgres_credentials.host,
         port=postgres_credentials.port,
         database=postgres_credentials.database,
-        cursor_factory=RealDictCursor
+        cursor_factory=RealDictCursor,
     )
     return db_conn
+
 
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
 @task
 def stream_records_to_es(
-    indexes: list[str], 
-    es_credentials: ElasticsearchCredentials, 
-    db_table: str, 
+    indexes: list[str],
+    es_credentials: ElasticsearchCredentials,
+    db_table: str,
     db_column_es_id: str = "id",
     db_column_es_index: str = "index",
-    last_modified = None):
+    last_modified=None,
+):
     logger = get_run_logger()
 
     db_conn = get_postgres_connection()
-    cursor = db_conn.cursor(name='large_query_cursor')
+    cursor = db_conn.cursor(name="large_query_cursor")
     cursor.itersize = BATCH_SIZE
 
     # Compose SQL query
 
     # Integrate last_modified when not None
-    suffix = f"AND updated_at >= {last_modified}" if last_modified else sql_query
+    suffix = f"AND updated_at >= {last_modified}" if last_modified else ""
     db_column_es_id_param = f", {db_column_es_id}" if db_column_es_id else ""
     indexes_list = ",".join(map(lambda index: f"'{index}'", indexes))
-    sql_query = f"SELECT document,{db_column_es_index}{db_column_es_id_param} FROM {db_table} WHERE {db_column_es_index} IN ({indexes_list}) {suffix}"
+    sql_query = f"""
+    SELECT document,{db_column_es_index}{db_column_es_id_param}
+    FROM {db_table}
+    WHERE {db_column_es_index} IN ({indexes_list}) {suffix}
+    """
 
-    logger.info(f'Creating cursor from query {sql_query}.')
+    logger.info(f"Creating cursor from query {sql_query}.")
 
     cursor.execute(sql_query)
 
@@ -59,10 +67,11 @@ def stream_records_to_es(
 
     def generate_actions():
         for record in cursor.fetchall():
+            parsed = dict(record)
             yield {
-                "_index": dict(record)[db_column_es_index],
-                "_id": dict(record)[db_column_es_id] if db_column_es_id else None,
-                "_source": dict(record)
+                "_index": parsed[db_column_es_index],
+                "_id": parsed[db_column_es_id] if db_column_es_id else None,
+                "_source": parsed["document"],
             }
 
     errors = 0
@@ -75,20 +84,18 @@ def stream_records_to_es(
     db_conn.close()
     return f"Streaming records into Elasticsearch indexes: '{indexes_list}' completed. {errors} records failed."
 
+
 # Define the Prefect flow
-@flow(
-    name= "prefect-flow-arc-indexer",
-    on_completion=[save_last_run_config]
-)
+@flow(name="prefect-flow-arc-indexer", on_completion=[save_last_run_config])
 def main_flow(
     db_block_name: str,
     db_table: str,
-    es_block_name: str, 
+    es_block_name: str,
     db_column_es_id: str = "id",
     db_column_es_index: str = "index",
     or_ids_to_run: list[str] = None,
-    full_sync: bool = False
-    ):
+    full_sync: bool = False,
+):
     """
     Flow to index all of the Hasura Postgres records.
     """
@@ -102,32 +109,38 @@ def main_flow(
     es_credentials = ElasticsearchCredentials.load(es_block_name)
 
     # Init task
-    #for or_id in or_ids_to_run:
-    stream_task = stream_records_to_es.submit(or_ids_to_run, es_credentials, db_table, db_column_es_id, db_column_es_index, last_modified).result()
+    # for or_id in or_ids_to_run:
+    stream_task = stream_records_to_es.submit(
+        or_ids_to_run,
+        es_credentials,
+        db_table,
+        db_column_es_id,
+        db_column_es_index,
+        last_modified,
+    ).result()
     logger.info(stream_task)
+
 
 # Execute the flow
 if __name__ == "__main__":
     with prefect_test_harness():
         es = ElasticsearchCredentials(
-            url="https://localhost:9200",
-            username="elastic",
-            password="elk-password"
+            url="https://localhost:9200", username="elastic", password="elk-password"
         )
         es.save("elastic-arc")
         db = DatabaseCredentials(
-            host= '0.0.0.0',
-            port= 5432,
-            username= "postgres",
+            host="0.0.0.0",
+            port=5432,
+            username="postgres",
             password="mysecretpassword",
             database="postgres",
-            driver="postgresql+asyncpg"
+            driver="postgresql+asyncpg",
         )
-        db.save('hasura-arc')
+        db.save("hasura-arc")
         main_flow(
             db_block_name="hasura-arc",
             es_block_name="elastic-arc",
             db_table="index",
             es_index="arcv3",
-            db_column_es_id="id"
+            db_column_es_id="id",
         )
