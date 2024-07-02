@@ -48,7 +48,8 @@ def stream_records_to_es(
     # Integrate last_modified when not None
     suffix = f"AND updated_at >= {last_modified}" if last_modified else sql_query
     db_column_es_id_param = f", {db_column_es_id}" if db_column_es_id else ""
-    sql_query = f"SELECT document,{db_column_es_index}{db_column_es_id_param} FROM {db_table} WHERE {db_column_es_index} IN ({','.join(map(lambda index: f"'{index}'", indexes))}) {suffix}"
+    indexes_list = ",".join(map(lambda index: f"'{index}'", indexes))
+    sql_query = f"SELECT document,{db_column_es_index}{db_column_es_id_param} FROM {db_table} WHERE {db_column_es_index} IN ({indexes_list}) {suffix}"
 
     logger.info(f'Creating cursor from query {sql_query}.')
 
@@ -72,7 +73,7 @@ def stream_records_to_es(
 
     cursor.close()
     db_conn.close()
-    return f"Streaming records into Elasticsearch indexes: '{','.join(indexes)}' completed. {errors} records failed."
+    return f"Streaming records into Elasticsearch indexes: '{indexes_list}' completed. {errors} records failed."
 
 # Define the Prefect flow
 @flow(
