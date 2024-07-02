@@ -109,8 +109,6 @@ def stream_records_to_es(
         if len(old_indexes) > 0:
             old_indexes_seq = ",".join(old_indexes)
             logger.info(f"Deleting old indexes {old_indexes_seq} for alias {index}")
-            es.indices.delete_alias(name=index, index=old_indexes_seq)
-            # if you delete an index, does it also delete the alias?
             es.indices.delete(index=old_indexes_seq)
 
     return f"Streaming records into Elasticsearch indexes: {indexes_list} completed. {errors} of {records} records failed."
