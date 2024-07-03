@@ -110,9 +110,8 @@ def create_indexes(
         index_name = f"{index}_{timestamp}"
         es.indices.create(index=index_name)
 
-    return logger.info(
-        f"Creation of Elasticsearch indexes {",".join(indexes)} completed."
-    )
+    indexes_str = ",".join(indexes)
+    return logger.info(f"Creation of Elasticsearch indexes {indexes_str} completed.")
 
 
 @task
@@ -129,7 +128,7 @@ def swap_indexes(
             else []
         )
         # switch alias
-        alias_name=f"{index}_{timestamp}"
+        alias_name = f"{index}_{timestamp}"
         logger.info(f"Switching alias {index} to new index {alias_name}.")
         es.indices.put_alias(name=index, index=alias_name)
 
@@ -139,9 +138,7 @@ def swap_indexes(
             logger.info(f"Deleting old indexes {old_indexes_seq} for alias {index}")
             es.indices.delete(index=old_indexes_seq)
 
-    return logger.info(
-        f"Elasticsearch indexes swapped succesfully."
-    )
+    return logger.info("Elasticsearch indexes swapped succesfully.")
 
 
 # Define the Prefect flow
@@ -170,29 +167,34 @@ def main_flow(
     if full_sync:
         # Get timestamp to uniquely identify indexes
         timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
-        t1 = create_indexes.submit(indexes=or_ids_to_run, es_credentials=es_credentials, timestamp=timestamp)
+        t1 = create_indexes.submit(
+            indexes=or_ids_to_run, es_credentials=es_credentials, timestamp=timestamp
+        )
         t2 = stream_records_to_es.submit(
             indexes=or_ids_to_run,
             es_credentials=es_credentials,
             db_credentials=db_credentials,
-            db_table= db_table,
+            db_table=db_table,
             db_column_es_id=db_column_es_id,
             db_column_es_index=db_column_es_index,
             timestamp=timestamp,
             wait_for=t1,
         )
         swap_indexes.submit(
-            indexes=or_ids_to_run, es_credentials=es_credentials, timestamp=timestamp, wait_for=t2
+            indexes=or_ids_to_run,
+            es_credentials=es_credentials,
+            timestamp=timestamp,
+            wait_for=t2,
         )
     else:
         stream_records_to_es.submit(
             indexes=or_ids_to_run,
             es_credentials=es_credentials,
             db_credentials=db_credentials,
-            db_table= db_table,
+            db_table=db_table,
             db_column_es_id=db_column_es_id,
             db_column_es_index=db_column_es_index,
-            last_modified=get_last_run_config("%Y-%m-%d")
+            last_modified=get_last_run_config("%Y-%m-%d"),
         )
 
 
