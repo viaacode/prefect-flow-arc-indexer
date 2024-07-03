@@ -166,6 +166,7 @@ def main_flow(
     db_credentials = DatabaseCredentials.load(db_block_name)
 
     # Init task
+    logger.info(f"Start indexing process (full sync = {full_sync})")
     if full_sync:
         # Get timestamp to uniquely identify indexes
         timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
