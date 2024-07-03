@@ -12,13 +12,10 @@ from datetime import datetime
 BATCH_SIZE = 1000
 
 
-def get_postgres_connection():
+def get_postgres_connection(postgres_credentials: DatabaseCredentials):
     """
     Function to get a postgres connection.
     """
-    postgres_credentials: DatabaseCredentials = DatabaseCredentials.load(
-        flow_run.get_parameters()["db_block_name"]
-    )
     logger = get_run_logger()
     logger.info("(Re)connecting to postgres")
     db_conn = psycopg2.connect(
@@ -37,9 +34,11 @@ def get_postgres_connection():
 def stream_records_to_es(
     indexes: list[str],
     es_credentials: ElasticsearchCredentials,
+    db_credentials: DatabaseCredentials,
     db_table: str,
     db_column_es_id: str = "id",
     db_column_es_index: str = "index",
+    timestamp: str = None,  # timestamp to uniquely identify indexes
     last_modified=None,
 ):
     logger = get_run_logger()
@@ -59,7 +58,7 @@ def stream_records_to_es(
     logger.info(f"Creating cursor from query {sql_query}.")
 
     # Connect to ES and Postgres
-    db_conn = get_postgres_connection()
+    db_conn = get_postgres_connection(db_credentials)
     es = es_credentials.get_client()
 
     # Create server-side cursor
@@ -69,20 +68,15 @@ def stream_records_to_es(
     # Run query
     cursor.execute(sql_query)
 
-    # Get timestamp
-    timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
-
-    # Create new indexes
-    for index in indexes:
-        index_name = f"{index}_{timestamp}"
-        es.indices.create(index=index_name)
-        logger.info(f"Created index {index_name}")
-
     # Fill new indexes
     def generate_actions():
         for record in cursor:
             dict_record = dict(record)
-            index_name = f"{dict_record[db_column_es_index]}_{timestamp}"
+            index_name = (
+                f"{dict_record[db_column_es_index]}_{timestamp}"
+                if last_modified is None
+                else dict_record[db_column_es_index]
+            )
             yield {
                 "_index": index_name,
                 "_id": (dict_record[db_column_es_id] if db_column_es_id else None),
@@ -100,7 +94,33 @@ def stream_records_to_es(
     cursor.close()
     db_conn.close()
 
-    # Do changeover from old to new indexes
+    return logger.info(
+        f"Streaming records into Elasticsearch indexes {indexes_list} completed. {errors} of {records} records failed."
+    )
+
+
+# Task to do changeover from old to new indexes when full sync
+@task
+def create_indexes(
+    indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
+):
+    logger = get_run_logger()
+    es = es_credentials.get_client()
+    for index in indexes:
+        index_name = f"{index}_{timestamp}"
+        es.indices.create(index=index_name)
+
+    return logger.info(
+        f"Creation of Elasticsearch indexes {",".join(indexes)} completed."
+    )
+
+
+@task
+def swap_indexes(
+    indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
+):
+    logger = get_run_logger()
+    es = es_credentials.get_client()
     for index in indexes:
         # get index connected to alias
         old_indexes = (
@@ -109,7 +129,9 @@ def stream_records_to_es(
             else []
         )
         # switch alias
-        es.indices.put_alias(name=index, index=f"{index}_{timestamp}")
+        alias_name=f"{index}_{timestamp}"
+        logger.info(f"Switching alias {index} to new index {alias_name}.")
+        es.indices.put_alias(name=index, index=alias_name)
 
         # delete old indexes if there are any
         if len(old_indexes) > 0:
@@ -117,7 +139,9 @@ def stream_records_to_es(
             logger.info(f"Deleting old indexes {old_indexes_seq} for alias {index}")
             es.indices.delete(index=old_indexes_seq)
 
-    return f"Streaming records into Elasticsearch indexes: {indexes_list} completed. {errors} of {records} records failed."
+    return logger.info(
+        f"Elasticsearch indexes swapped succesfully."
+    )
 
 
 # Define the Prefect flow
@@ -137,23 +161,38 @@ def main_flow(
     # Load logger
     logger = get_run_logger()
 
-    # Implement delta sync when available
-    last_modified = get_last_run_config("%Y-%m-%d") if not full_sync else None
-
     # Load credentials
     es_credentials = ElasticsearchCredentials.load(es_block_name)
+    db_credentials = DatabaseCredentials.load(db_block_name)
 
     # Init task
-    # for or_id in or_ids_to_run:
-    stream_task = stream_records_to_es.submit(
-        or_ids_to_run,
-        es_credentials,
-        db_table,
-        db_column_es_id,
-        db_column_es_index,
-        last_modified,
-    ).result()
-    logger.info(stream_task)
+    if full_sync:
+        # Get timestamp to uniquely identify indexes
+        timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
+        t1 = create_indexes.submit(indexes=or_ids_to_run, es_credentials=es_credentials, timestamp=timestamp)
+        t2 = stream_records_to_es.submit(
+            indexes=or_ids_to_run,
+            es_credentials=es_credentials,
+            db_credentials=db_credentials,
+            db_table= db_table,
+            db_column_es_id=db_column_es_id,
+            db_column_es_index=db_column_es_index,
+            timestamp=timestamp,
+            wait_for=t1,
+        )
+        swap_indexes.submit(
+            indexes=or_ids_to_run, es_credentials=es_credentials, timestamp=timestamp, wait_for=t2
+        )
+    else:
+        stream_records_to_es.submit(
+            indexes=or_ids_to_run,
+            es_credentials=es_credentials,
+            db_credentials=db_credentials,
+            db_table= db_table,
+            db_column_es_id=db_column_es_id,
+            db_column_es_index=db_column_es_index,
+            last_modified=get_last_run_config("%Y-%m-%d")
+        )
 
 
 # Execute the flow
