@@ -1,7 +1,6 @@
 import psycopg2
 from elasticsearch.helpers import streaming_bulk
 from prefect import flow, get_run_logger, task
-from prefect.runtime import flow_run
 from prefect.testing.utilities import prefect_test_harness
 from prefect_meemoo.config.last_run import get_last_run_config, save_last_run_config
 from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
