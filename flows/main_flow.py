@@ -90,7 +90,6 @@ def stream_records_to_es(
                 if last_modified is None
                 else dict_record[db_column_es_index]
             )
-            logger.info(f"Inserting {dict_record} into {index_name}")
             yield {
                 "_index": index_name,
                 "_id": (dict_record[db_column_es_id] if db_column_es_id else None),
