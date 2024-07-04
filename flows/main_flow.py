@@ -59,6 +59,10 @@ def stream_records_to_es(
 ):
     logger = get_run_logger()
 
+    logger.info(
+        f"Starting indexing stream with timestamp {timestamp} and last modified {last_modified}."
+    )
+
     # Compose SQL query
 
     # Integrate last_modified when not None
