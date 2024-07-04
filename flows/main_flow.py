@@ -7,6 +7,9 @@ from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
 from prefect_sqlalchemy.credentials import DatabaseCredentials
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
+import os
+
+os.environ.update(PREFECT_LOGGING_LEVEL="DEBUG")
 
 BATCH_SIZE = 1000
 
