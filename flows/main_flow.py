@@ -28,6 +28,20 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
     return db_conn
 
 
+@task
+def create_indexes(
+    indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
+):
+    logger = get_run_logger()
+    es = es_credentials.get_client()
+    for index in indexes:
+        index_name = f"{index}_{timestamp}"
+        result = es.indices.create(index=index_name)
+        logger.info(f"Created of Elasticsearch index {result}.")
+
+    return logger.info("Creation of Elasticsearch indexes completed.")
+
+
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
 @task
 def stream_records_to_es(
@@ -76,6 +90,7 @@ def stream_records_to_es(
                 if last_modified is None
                 else dict_record[db_column_es_index]
             )
+            logger.debug(f"Inserting {dict_record} into {index_name}")
             yield {
                 "_index": index_name,
                 "_id": (dict_record[db_column_es_id] if db_column_es_id else None),
@@ -99,20 +114,6 @@ def stream_records_to_es(
 
 
 # Task to do changeover from old to new indexes when full sync
-@task
-def create_indexes(
-    indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
-):
-    logger = get_run_logger()
-    es = es_credentials.get_client()
-    for index in indexes:
-        index_name = f"{index}_{timestamp}"
-        es.indices.create(index=index_name)
-
-    indexes_str = ",".join(indexes)
-    return logger.info(f"Creation of Elasticsearch indexes {indexes_str} completed.")
-
-
 @task
 def swap_indexes(
     indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
