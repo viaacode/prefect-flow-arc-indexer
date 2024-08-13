@@ -32,6 +32,20 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
 
 
 @task
+def get_indexes_list(db_credentials: DatabaseCredentials):
+    # Connect to Postgres
+    db_conn = get_postgres_connection(db_credentials)
+
+    # Create cursor
+    cursor = db_conn.cursor()
+
+    # Run query
+    cursor.execute("SELECT DISTINCT(index) FROM graph._index_intellectual_entity;")
+
+    return map(lambda i: i[0], cursor.fetchall())
+
+
+@task
 def create_indexes(
     indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
 ):
@@ -170,9 +184,15 @@ def main_flow(
 
     # Init task
     logger.info(f"Start indexing process (full sync = {full_sync})")
+
+    # Get all indexes from database if none provided
+    if or_ids_to_run is None:
+        or_ids_to_run = get_indexes_list.submit(db_credentials=db_credentials).result()
+
     if full_sync:
         # Get timestamp to uniquely identify indexes
         timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
+
         t1 = create_indexes.submit(
             indexes=or_ids_to_run, es_credentials=es_credentials, timestamp=timestamp
         )
