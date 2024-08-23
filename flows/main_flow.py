@@ -94,8 +94,9 @@ def stream_records_to_es(
 
     # Connect to ES and Postgres
     db_conn = get_postgres_connection(db_credentials)
-    es = es_credentials.get_client()
-    es.options(timeout=30, max_retries=10, retry_on_timeout=True)
+    es = es_credentials.get_client().options(
+        timeout=30, max_retries=10, retry_on_timeout=True
+    )
 
     # Create server-side cursor
     cursor = db_conn.cursor(name="large_query_cursor")
