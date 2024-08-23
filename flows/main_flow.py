@@ -40,8 +40,12 @@ def get_indexes_list(db_credentials: DatabaseCredentials):
 
     # Run query
     cursor.execute("SELECT DISTINCT(index) FROM graph._index_intellectual_entity;")
+    indexes = [row["index"] for row in list(cursor.fetchall())]
+    logger.info(
+        f"Retrieved the following Elasticsearch indexes from database: {indexes}."
+    )
 
-    return [row["index"] for row in list(cursor.fetchall())]
+    return indexes
 
 
 @task
@@ -95,7 +99,7 @@ def stream_records_to_es(
     # Connect to ES and Postgres
     db_conn = get_postgres_connection(db_credentials)
     es = es_credentials.get_client().options(
-        timeout=30, max_retries=10, retry_on_timeout=True
+        request_timeout=30, max_retries=10, retry_on_timeout=True
     )
 
     # Create server-side cursor
