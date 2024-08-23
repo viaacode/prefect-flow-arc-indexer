@@ -186,7 +186,7 @@ def main_flow(
     logger.info(f"Start indexing process (full sync = {full_sync})")
 
     # Get all indexes from database if none provided
-    if or_ids_to_run is None:
+    if or_ids_to_run is None or len(or_ids_to_run) < 1:
         or_ids_to_run = get_indexes_list.submit(db_credentials=db_credentials).result()
 
     if full_sync:
