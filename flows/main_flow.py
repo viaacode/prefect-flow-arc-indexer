@@ -11,8 +11,6 @@ import os
 
 os.environ.update(PREFECT_LOGGING_LEVEL="DEBUG")
 
-BATCH_SIZE = 1000
-
 
 def get_postgres_connection(postgres_credentials: DatabaseCredentials):
     """
@@ -69,6 +67,8 @@ def stream_records_to_es(
     db_table: str,
     db_column_es_id: str = "id",
     db_column_es_index: str = "index",
+    db_batch_size: int = 1000,
+    es_chunk_size: int = 500,
     timestamp: str = None,  # timestamp to uniquely identify indexes
     last_modified=None,
 ):
@@ -100,7 +100,7 @@ def stream_records_to_es(
 
     # Create server-side cursor
     cursor = db_conn.cursor(name="large_query_cursor")
-    cursor.itersize = BATCH_SIZE
+    cursor.itersize = db_batch_size
 
     # Run query
     cursor.execute(sql_query)
@@ -122,7 +122,7 @@ def stream_records_to_es(
 
     records = 0
     errors = 0
-    for ok, item in streaming_bulk(es, generate_actions()):
+    for ok, item in streaming_bulk(es, generate_actions(), chunk_size=es_chunk_size):
         records += 1
         if not ok:
             errors += 1
@@ -174,6 +174,8 @@ def main_flow(
     db_column_es_index: str = "index",
     or_ids_to_run: list[str] = None,
     full_sync: bool = False,
+    db_batch_size: int = 1000,
+    es_chunk_size: int = 500,
 ):
     """
     Flow to index all of the Hasura Postgres records.
@@ -206,6 +208,8 @@ def main_flow(
             db_table=db_table,
             db_column_es_id=db_column_es_id,
             db_column_es_index=db_column_es_index,
+            db_batch_size=db_batch_size,
+            es_chunk_size=es_chunk_size,
             timestamp=timestamp,
             wait_for=t1,
         )
@@ -223,6 +227,8 @@ def main_flow(
             db_table=db_table,
             db_column_es_id=db_column_es_id,
             db_column_es_index=db_column_es_index,
+            db_batch_size=db_batch_size,
+            es_chunk_size=es_chunk_size,
             last_modified=get_last_run_config("%Y-%m-%d"),
         )
 
