@@ -43,7 +43,7 @@ def get_indexes_list(db_credentials: DatabaseCredentials):
     # Run query
     cursor.execute("SELECT DISTINCT(index) FROM graph._index_intellectual_entity;")
 
-    return [row[0] for row in list(cursor.fetchall())]
+    return [row["index"] for row in list(cursor.fetchall())]
 
 
 @task
