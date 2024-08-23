@@ -33,6 +33,7 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
 
 @task
 def get_indexes_list(db_credentials: DatabaseCredentials):
+    logger = get_run_logger()
     # Connect to Postgres
     db_conn = get_postgres_connection(db_credentials)
 
@@ -42,7 +43,7 @@ def get_indexes_list(db_credentials: DatabaseCredentials):
     # Run query
     cursor.execute("SELECT DISTINCT(index) FROM graph._index_intellectual_entity;")
 
-    return map(lambda i: i[0], cursor.fetchall())
+    return [row[0] for row in list(cursor.fetchall())]
 
 
 @task
