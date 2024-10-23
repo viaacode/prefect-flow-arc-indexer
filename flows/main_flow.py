@@ -147,6 +147,17 @@ def swap_indexes(
 ):
     logger = get_run_logger()
     es = es_credentials.get_client()
+
+    # delete all indexes that won't be touched
+    all_indexes = list(es.indices.get_alias(name="*").keys())
+    untouched_indexes = [
+        index for index in all_indexes if not any(alias in index for alias in indexes)
+    ]
+    if len(untouched_indexes) > 0:
+        untouched_indexes_seq = ",".join(untouched_indexes)
+        logger.info(f"Deleting untouched indexes {untouched_indexes_seq}")
+        es.indices.delete(index=untouched_indexes_seq)
+
     for index in indexes:
         # get index connected to alias
         old_indexes = (
