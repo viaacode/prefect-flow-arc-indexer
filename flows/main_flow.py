@@ -150,11 +150,13 @@ def swap_indexes(
 
     # delete all indexes that won't be touched
     all_indexes = list(es.indices.get_alias(name="*").keys())
-    untouched_indexes = ",".join(
-        [index for index in all_indexes if not any(alias in index for alias in indexes)]
-    )
-    logger.info(f"Deleting untouched indexes {untouched_indexes}")
-    es.indices.delete(index=untouched_indexes)
+    untouched_indexes = [
+        index for index in all_indexes if not any(alias in index for alias in indexes)
+    ]
+    if len(untouched_indexes) > 0:
+        untouched_indexes_seq = ",".join(untouched_indexes)
+        logger.info(f"Deleting untouched indexes {untouched_indexes_seq}")
+        es.indices.delete(index=untouched_indexes_seq)
 
     for index in indexes:
         # get index connected to alias
