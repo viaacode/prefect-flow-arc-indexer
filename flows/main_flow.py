@@ -143,7 +143,7 @@ def stream_records_to_es(
 # Task to do changeover from old to new indexes when full sync
 @task
 def swap_indexes(
-    indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
+    aliases: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
 ):
     logger = get_run_logger()
     es = es_credentials.get_client()
@@ -151,29 +151,29 @@ def swap_indexes(
     # delete all indexes that won't be touched
     all_indexes = list(es.indices.get_alias(name="*").keys())
     untouched_indexes = [
-        index for index in all_indexes if not any(alias in index for alias in indexes)
+        index for index in all_indexes if not any(alias in index for alias in aliases)
     ]
     if len(untouched_indexes) > 0:
         untouched_indexes_seq = ",".join(untouched_indexes)
         logger.info(f"Deleting untouched indexes {untouched_indexes_seq}")
         es.indices.delete(index=untouched_indexes_seq)
 
-    for index in indexes:
+    for alias in aliases:
         # get index connected to alias
         old_indexes = (
-            list(es.indices.get_alias(name=index).keys())
-            if es.indices.exists_alias(name=index)
+            list(es.indices.get_alias(name=alias).keys())
+            if es.indices.exists_alias(name=alias)
             else []
         )
         # switch alias
-        alias_name = f"{index}_{timestamp}"
-        logger.info(f"Switching alias {index} to new index {alias_name}.")
-        es.indices.put_alias(name=index, index=alias_name)
+        index_name = f"{alias}_{timestamp}"
+        logger.info(f"Switching alias {alias} to new index {index_name}.")
+        es.indices.put_alias(name=alias, index=index_name)
 
         # delete old indexes if there are any
         if len(old_indexes) > 0:
             old_indexes_seq = ",".join(old_indexes)
-            logger.info(f"Deleting old indexes {old_indexes_seq} for alias {index}")
+            logger.info(f"Deleting old indexes {old_indexes_seq} for alias {alias}")
             es.indices.delete(index=old_indexes_seq)
 
     return logger.info("Elasticsearch indexes swapped succesfully.")
@@ -229,7 +229,7 @@ def main_flow(
             wait_for=t1,
         )
         swap_indexes.submit(
-            indexes=or_ids_to_run,
+            aliases=or_ids_to_run,
             es_credentials=es_credentials,
             timestamp=timestamp,
             wait_for=t2,
