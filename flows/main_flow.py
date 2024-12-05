@@ -30,7 +30,11 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
 
 
 @task
-def get_indexes_list(db_credentials: DatabaseCredentials):
+def get_indexes_list(
+    db_credentials: DatabaseCredentials,
+    db_table: str,
+    db_column_es_index: str = "index",
+):
     logger = get_run_logger()
     # Connect to Postgres
     db_conn = get_postgres_connection(db_credentials)
@@ -39,8 +43,8 @@ def get_indexes_list(db_credentials: DatabaseCredentials):
     cursor = db_conn.cursor()
 
     # Run query
-    cursor.execute("SELECT DISTINCT(index) FROM graph._index_intellectual_entity;")
-    indexes = [row["index"] for row in list(cursor.fetchall())]
+    cursor.execute(f"SELECT DISTINCT({db_column_es_index}) FROM {db_table};")
+    indexes = [row[db_column_es_index] for row in list(cursor.fetchall())]
     logger.info(
         f"Retrieved the following Elasticsearch indexes from database: {indexes}."
     )
@@ -207,7 +211,11 @@ def main_flow(
 
     # Get all indexes from database if none provided
     if or_ids_to_run is None or len(or_ids_to_run) < 1:
-        or_ids_to_run = get_indexes_list.submit(db_credentials=db_credentials).result()
+        or_ids_to_run = get_indexes_list.submit(
+            db_credentials=db_credentials,
+            db_table=db_table,
+            db_column_es_index=db_column_es_index,
+        ).result()
 
     if full_sync:
         # Get timestamp to uniquely identify indexes
