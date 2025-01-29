@@ -1,6 +1,7 @@
 import psycopg2
 from elasticsearch.helpers import streaming_bulk
 from prefect import flow, get_run_logger, task
+from prefect.utilities.annotations import quote
 from prefect.testing.utilities import prefect_test_harness
 from prefect_meemoo.config.last_run import get_last_run_config, save_last_run_config
 from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
@@ -82,10 +83,6 @@ def stream_records_to_es(
 ):
     logger = get_run_logger()
 
-    logger.info(
-        f"Starting indexing stream with timestamp {timestamp} and last modified {last_modified}."
-    )
-
     # Compose SQL query
 
     # Integrate last_modified when not None
@@ -128,9 +125,19 @@ def stream_records_to_es(
                 "_source": dict_record["document"],
             }
 
+    logger.info(
+        f"Starting indexing stream with timestamp {timestamp} and last modified {last_modified}."
+    )
+
     records = 0
     errors = 0
-    for ok, item in streaming_bulk(es, generate_actions(), chunk_size=es_chunk_size):
+    for ok, item in streaming_bulk(
+        es,
+        generate_actions(),
+        chunk_size=es_chunk_size,
+        raise_on_error=False,
+        raise_on_exception=False,
+    ):
         records += 1
         if not ok:
             errors += 1
@@ -222,10 +229,12 @@ def main_flow(
         timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
 
         t1 = create_indexes.submit(
-            indexes=or_ids_to_run, es_credentials=es_credentials, timestamp=timestamp
+            indexes=quote(or_ids_to_run),
+            es_credentials=es_credentials,
+            timestamp=timestamp,
         )
         t2 = stream_records_to_es.submit(
-            indexes=or_ids_to_run,
+            indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             db_credentials=db_credentials,
             db_table=db_table,
@@ -237,14 +246,14 @@ def main_flow(
             wait_for=t1,
         )
         swap_indexes.submit(
-            indexes=or_ids_to_run,
+            indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             timestamp=timestamp,
             wait_for=t2,
         )
     else:
         stream_records_to_es.submit(
-            indexes=or_ids_to_run,
+            indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             db_credentials=db_credentials,
             db_table=db_table,
