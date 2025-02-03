@@ -1,5 +1,5 @@
-prefect-meemoo[elasticsearch]==v0.8.1-b1
+prefect-meemoo[elasticsearch]==1.0.0
 prefect-sqlalchemy==0.2.4
-prefect==2.14.12
+prefect==2.20.16
 psycopg2-binary==2.9.5
 pytest

@@ -1,4 +1,4 @@
-from prefect.infrastructure.docker import DockerContainer, DockerRegistry
+from prefect.infrastructure.container import DockerContainer, DockerRegistry
 import argparse
 
 
