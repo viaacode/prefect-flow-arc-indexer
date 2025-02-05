@@ -89,10 +89,9 @@ def stream_records_to_es(
     suffix = (
         f"AND updated_at >= {last_modified}" if last_modified else "AND NOT is_deleted"
     )
-    db_column_es_id_param = f", {db_column_es_id}" if db_column_es_id else ""
     indexes_list = ",".join(map(lambda index: f"'{index}'", indexes))
     sql_query = f"""
-    SELECT document,{db_column_es_index}{db_column_es_id_param}
+    SELECT *
     FROM {db_table}
     WHERE {db_column_es_index} IN ({indexes_list}) {suffix}
     """
