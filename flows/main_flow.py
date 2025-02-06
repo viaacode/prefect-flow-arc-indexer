@@ -85,12 +85,13 @@ def stream_records_to_es(
 
     # Compose SQL query
 
-    # Integrate last_modified when not None
-    suffix = f"AND updated_at >= {last_modified}" if last_modified else ""
-    db_column_es_id_param = f", {db_column_es_id}" if db_column_es_id else ""
+    # Integrate last_modified when not None And if not, ignore deleted documents because full sync
+    suffix = (
+        f"AND updated_at >= {last_modified}" if last_modified else "AND NOT is_deleted"
+    )
     indexes_list = ",".join(map(lambda index: f"'{index}'", indexes))
     sql_query = f"""
-    SELECT document,{db_column_es_index}{db_column_es_id_param}
+    SELECT *
     FROM {db_table}
     WHERE {db_column_es_index} IN ({indexes_list}) {suffix}
     """
@@ -123,6 +124,7 @@ def stream_records_to_es(
                 "_index": index_name,
                 "_id": (dict_record[db_column_es_id] if db_column_es_id else None),
                 "_source": dict_record["document"],
+                "_op_type": "delete" if dict_record["is_deleted"] else "index",
             }
 
     logger.info(
