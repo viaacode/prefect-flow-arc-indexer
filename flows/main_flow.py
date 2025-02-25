@@ -78,6 +78,9 @@ def stream_records_to_es(
     db_column_es_index: str = "index",
     db_batch_size: int = 1000,
     es_chunk_size: int = 500,
+    es_request_timeout: int = 30,
+    es_max_retries: int = 10,
+    es_retry_on_timeout: int = True,
     timestamp: str = None,  # timestamp to uniquely identify indexes
     last_modified=None,
 ):
@@ -101,7 +104,9 @@ def stream_records_to_es(
     # Connect to ES and Postgres
     db_conn = get_postgres_connection(db_credentials)
     es = es_credentials.get_client().options(
-        request_timeout=30, max_retries=10, retry_on_timeout=True
+        request_timeout=es_request_timeout,
+        max_retries=es_max_retries,
+        retry_on_timeout=es_retry_on_timeout,
     )
 
     # Create server-side cursor
