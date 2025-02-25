@@ -133,7 +133,7 @@ def stream_records_to_es(
             }
 
     logger.info(
-        f"Starting indexing stream with timestamp {timestamp} and last modified {last_modified}."
+        f"Starting indexing stream of {cursor.rowcount} documents with timestamp {timestamp} and last modified {last_modified}."
     )
 
     records = 0
@@ -149,6 +149,11 @@ def stream_records_to_es(
         if not ok:
             errors += 1
             logger.error(item)
+
+        if records % round(cursor.rowcount / 10) == 0:
+            logger.info(
+                f"Indexed {records} of {cursor.rowcount} records ({round((records/cursor.rowcount) * 100)}%)"
+            )
 
     cursor.close()
     db_conn.close()
