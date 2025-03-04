@@ -80,7 +80,7 @@ def stream_records_to_es(
     es_chunk_size: int = 500,
     es_request_timeout: int = 30,
     es_max_retries: int = 10,
-    es_retry_on_timeout: int = True,
+    es_retry_on_timeout: bool = True,
     timestamp: str = None,  # timestamp to uniquely identify indexes
     last_modified=None,
 ):
@@ -216,7 +216,7 @@ def main_flow(
     es_chunk_size: int = 500,
     es_request_timeout: int = 30,
     es_max_retries: int = 10,
-    es_retry_on_timeout: int = True,
+    es_retry_on_timeout: bool = True,
 ):
     """
     Flow to index all of the Hasura Postgres records.
