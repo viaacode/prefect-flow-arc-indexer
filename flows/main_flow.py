@@ -214,6 +214,9 @@ def main_flow(
     full_sync: bool = False,
     db_batch_size: int = 1000,
     es_chunk_size: int = 500,
+    es_request_timeout: int = 30,
+    es_max_retries: int = 10,
+    es_retry_on_timeout: int = True,
 ):
     """
     Flow to index all of the Hasura Postgres records.
@@ -254,6 +257,9 @@ def main_flow(
             db_column_es_index=db_column_es_index,
             db_batch_size=db_batch_size,
             es_chunk_size=es_chunk_size,
+            es_request_timeout=es_request_timeout,
+            es_max_retries=es_max_retries,
+            es_retry_on_timeout=es_retry_on_timeout,
             timestamp=timestamp,
             wait_for=t1,
         )
