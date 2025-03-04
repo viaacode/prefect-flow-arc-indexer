@@ -78,6 +78,9 @@ def stream_records_to_es(
     db_column_es_index: str = "index",
     db_batch_size: int = 1000,
     es_chunk_size: int = 500,
+    es_request_timeout: int = 30,
+    es_max_retries: int = 10,
+    es_retry_on_timeout: bool = True,
     timestamp: str = None,  # timestamp to uniquely identify indexes
     last_modified=None,
 ):
@@ -101,7 +104,9 @@ def stream_records_to_es(
     # Connect to ES and Postgres
     db_conn = get_postgres_connection(db_credentials)
     es = es_credentials.get_client().options(
-        request_timeout=30, max_retries=10, retry_on_timeout=True
+        request_timeout=es_request_timeout,
+        max_retries=es_max_retries,
+        retry_on_timeout=es_retry_on_timeout,
     )
 
     # Create server-side cursor
@@ -128,7 +133,7 @@ def stream_records_to_es(
             }
 
     logger.info(
-        f"Starting indexing stream with timestamp {timestamp} and last modified {last_modified}."
+        f"Starting indexing stream of {cursor.rowcount} documents with timestamp {timestamp} and last modified {last_modified}."
     )
 
     records = 0
@@ -144,6 +149,11 @@ def stream_records_to_es(
         if not ok:
             errors += 1
             logger.error(item)
+
+        if records % 50 == 0:
+            logger.info(
+                f"Indexed {records} of {cursor.rowcount} records"  # ({round((records/cursor.rowcount) * 100)}%)"
+            )
 
     cursor.close()
     db_conn.close()
@@ -204,6 +214,9 @@ def main_flow(
     full_sync: bool = False,
     db_batch_size: int = 1000,
     es_chunk_size: int = 500,
+    es_request_timeout: int = 30,
+    es_max_retries: int = 10,
+    es_retry_on_timeout: bool = True,
 ):
     """
     Flow to index all of the Hasura Postgres records.
@@ -244,6 +257,9 @@ def main_flow(
             db_column_es_index=db_column_es_index,
             db_batch_size=db_batch_size,
             es_chunk_size=es_chunk_size,
+            es_request_timeout=es_request_timeout,
+            es_max_retries=es_max_retries,
+            es_retry_on_timeout=es_retry_on_timeout,
             timestamp=timestamp,
             wait_for=t1,
         )
