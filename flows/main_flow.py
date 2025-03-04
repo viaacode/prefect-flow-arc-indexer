@@ -150,9 +150,9 @@ def stream_records_to_es(
             errors += 1
             logger.error(item)
 
-        if records % round(cursor.rowcount / 10) == 0:
+        if records % 50 == 0:
             logger.info(
-                f"Indexed {records} of {cursor.rowcount} records ({round((records/cursor.rowcount) * 100)}%)"
+                f"Indexed {records} of {cursor.rowcount} records"  # ({round((records/cursor.rowcount) * 100)}%)"
             )
 
     cursor.close()
