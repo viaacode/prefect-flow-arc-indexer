@@ -7,6 +7,7 @@ from prefect_meemoo.config.last_run import get_last_run_config, save_last_run_co
 from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
 from prefect_sqlalchemy.credentials import DatabaseCredentials
 from psycopg2.extras import RealDictCursor
+from functools import partial
 from datetime import datetime
 import os
 
@@ -65,6 +66,24 @@ def create_indexes(
         logger.info(f"Created of Elasticsearch index {result}.")
 
     return logger.info("Creation of Elasticsearch indexes completed.")
+
+
+def delete_indexes(
+    task,
+    task_run,
+    state,
+    indexes: list[str],
+    es_credentials: ElasticsearchCredentials,
+    timestamp: str,
+):
+    logger = get_run_logger()
+    es = es_credentials.get_client()
+    for index in indexes:
+        index_name = f"{index}_{timestamp}"
+        result = es.indices.delete(index=index_name)
+        logger.info(f"Deletion of Elasticsearch index {result}.")
+
+    return logger.info("Cleanup of Elasticsearch indexes completed.")
 
 
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
@@ -151,9 +170,7 @@ def stream_records_to_es(
             logger.error(item)
 
         if records % 50 == 0:
-            logger.info(
-                f"Indexed {records} of {cursor.rowcount} records"  # ({round((records/cursor.rowcount) * 100)}%)"
-            )
+            logger.info(f"Indexed {records} records.")
 
     cursor.close()
     db_conn.close()
@@ -248,7 +265,16 @@ def main_flow(
             es_credentials=es_credentials,
             timestamp=timestamp,
         )
-        t2 = stream_records_to_es.submit(
+        t2 = stream_records_to_es.with_options(
+            on_failure=[
+                partial(
+                    delete_indexes,
+                    indexes=or_ids_to_run,
+                    es_credentials=es_credentials,
+                    timestamp=timestamp,
+                )
+            ]
+        ).submit(
             indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             db_credentials=db_credentials,
@@ -270,7 +296,16 @@ def main_flow(
             wait_for=t2,
         )
     else:
-        stream_records_to_es.submit(
+        stream_records_to_es.with_options(
+            on_failure=[
+                partial(
+                    delete_indexes,
+                    indexes=or_ids_to_run,
+                    es_credentials=es_credentials,
+                    timestamp=timestamp,
+                )
+            ]
+        ).submit(
             indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             db_credentials=db_credentials,
