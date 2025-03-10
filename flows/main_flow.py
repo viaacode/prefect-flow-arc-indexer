@@ -260,7 +260,18 @@ def main_flow(
             es_credentials=es_credentials,
             timestamp=timestamp,
         )
-        t2 = stream_records_to_es.submit(
+        t2 = stream_records_to_es.with_options(
+            on_failure=[
+                partial(
+                    delete_indexes,
+                    **dict(
+                        indexes=or_ids_to_run,
+                        es_credentials=es_credentials,
+                        timestamp=timestamp,
+                    ),
+                )
+            ]
+        ).submit(
             indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             db_credentials=db_credentials,
@@ -274,6 +285,15 @@ def main_flow(
             es_retry_on_timeout=es_retry_on_timeout,
             timestamp=timestamp,
             wait_for=t1,
+        )
+        swap_indexes.submit(
+            indexes=quote(or_ids_to_run),
+            es_credentials=es_credentials,
+            timestamp=timestamp,
+            wait_for=t2,
+        )
+    else:
+        stream_records_to_es.with_options(
             on_failure=[
                 partial(
                     delete_indexes,
@@ -283,16 +303,8 @@ def main_flow(
                         timestamp=timestamp,
                     ),
                 )
-            ],
-        )
-        swap_indexes.submit(
-            indexes=quote(or_ids_to_run),
-            es_credentials=es_credentials,
-            timestamp=timestamp,
-            wait_for=t2,
-        )
-    else:
-        stream_records_to_es.submit(
+            ]
+        ).submit(
             indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             db_credentials=db_credentials,
@@ -302,16 +314,6 @@ def main_flow(
             db_batch_size=db_batch_size,
             es_chunk_size=es_chunk_size,
             last_modified=get_last_run_config("%Y-%m-%d"),
-            on_failure=[
-                partial(
-                    delete_indexes,
-                    **dict(
-                        indexes=or_ids_to_run,
-                        es_credentials=es_credentials,
-                        timestamp=timestamp,
-                    ),
-                )
-            ],
         )
 
 
