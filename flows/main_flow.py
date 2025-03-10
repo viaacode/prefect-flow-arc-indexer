@@ -7,6 +7,7 @@ from prefect_meemoo.config.last_run import get_last_run_config, save_last_run_co
 from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
 from prefect_sqlalchemy.credentials import DatabaseCredentials
 from psycopg2.extras import RealDictCursor
+from functools import partial
 from datetime import datetime
 import os
 
@@ -65,6 +66,19 @@ def create_indexes(
         logger.info(f"Created of Elasticsearch index {result}.")
 
     return logger.info("Creation of Elasticsearch indexes completed.")
+
+
+def delete_indexes(
+    indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
+):
+    logger = get_run_logger()
+    es = es_credentials.get_client()
+    for index in indexes:
+        index_name = f"{index}_{timestamp}"
+        result = es.indices.delete(index=index_name)
+        logger.info(f"Deletion of Elasticsearch index {result}.")
+
+    return logger.info("Cleanup of Elasticsearch indexes completed.")
 
 
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
@@ -260,6 +274,16 @@ def main_flow(
             es_retry_on_timeout=es_retry_on_timeout,
             timestamp=timestamp,
             wait_for=t1,
+            on_failure=[
+                partial(
+                    delete_indexes,
+                    **dict(
+                        indexes=or_ids_to_run,
+                        es_credentials=es_credentials,
+                        timestamp=timestamp,
+                    ),
+                )
+            ],
         )
         swap_indexes.submit(
             indexes=quote(or_ids_to_run),
@@ -278,6 +302,16 @@ def main_flow(
             db_batch_size=db_batch_size,
             es_chunk_size=es_chunk_size,
             last_modified=get_last_run_config("%Y-%m-%d"),
+            on_failure=[
+                partial(
+                    delete_indexes,
+                    **dict(
+                        indexes=or_ids_to_run,
+                        es_credentials=es_credentials,
+                        timestamp=timestamp,
+                    ),
+                )
+            ],
         )
 
 
