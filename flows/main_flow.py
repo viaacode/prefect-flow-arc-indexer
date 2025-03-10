@@ -151,9 +151,7 @@ def stream_records_to_es(
             logger.error(item)
 
         if records % 50 == 0:
-            logger.info(
-                f"Indexed {records} of {cursor.rowcount} records"  # ({round((records/cursor.rowcount) * 100)}%)"
-            )
+            logger.info(f"Indexed {records} records.")
 
     cursor.close()
     db_conn.close()
