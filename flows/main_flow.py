@@ -69,7 +69,12 @@ def create_indexes(
 
 
 def delete_indexes(
-    indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
+    task,
+    task_run,
+    state,
+    indexes: list[str],
+    es_credentials: ElasticsearchCredentials,
+    timestamp: str,
 ):
     logger = get_run_logger()
     es = es_credentials.get_client()
@@ -264,11 +269,9 @@ def main_flow(
             on_failure=[
                 partial(
                     delete_indexes,
-                    **dict(
-                        indexes=or_ids_to_run,
-                        es_credentials=es_credentials,
-                        timestamp=timestamp,
-                    ),
+                    indexes=or_ids_to_run,
+                    es_credentials=es_credentials,
+                    timestamp=timestamp,
                 )
             ]
         ).submit(
@@ -297,11 +300,9 @@ def main_flow(
             on_failure=[
                 partial(
                     delete_indexes,
-                    **dict(
-                        indexes=or_ids_to_run,
-                        es_credentials=es_credentials,
-                        timestamp=timestamp,
-                    ),
+                    indexes=or_ids_to_run,
+                    es_credentials=es_credentials,
+                    timestamp=timestamp,
                 )
             ]
         ).submit(
