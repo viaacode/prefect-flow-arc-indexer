@@ -182,8 +182,9 @@ def stream_records_to_es(
 
 @task
 def delete_untouched_indexes(
-    indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
+    indexes: list[str], es_credentials: ElasticsearchCredentials
 ):
+    logger = get_run_logger()
     es = es_credentials.get_client()
 
     # delete all indexes that won't be touched
@@ -191,14 +192,10 @@ def delete_untouched_indexes(
     untouched_indexes = [
         index for index in all_indexes if not any(alias in index for alias in indexes)
     ]
-    delete_indexes(
-        None,
-        None,
-        None,
-        indexes=untouched_indexes,
-        es_credentials=es_credentials,
-        timestamp=timestamp,
-    )
+    if len(untouched_indexes) > 0:
+        untouched_indexes_seq = ",".join(untouched_indexes)
+        logger.info(f"Deleting untouched indexes {untouched_indexes_seq}")
+        es.indices.delete(index=untouched_indexes_seq)
 
 
 # Task to do changeover from old to new indexes when full sync
@@ -270,9 +267,10 @@ def main_flow(
             db_column_es_index=db_column_es_index,
         ).result()
 
+    # Get timestamp to uniquely identify indexes
+    timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
+
     if full_sync:
-        # Get timestamp to uniquely identify indexes
-        timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
 
         # When there are indexes that are no longer part of the full sync, delete them
         if use_all_indexes:
