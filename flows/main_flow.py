@@ -46,12 +46,42 @@ def get_indexes_list(
 
     # Run query
     cursor.execute(f"SELECT DISTINCT({db_column_es_index}) FROM {db_table};")
-    indexes = [row[db_column_es_index] for row in list(cursor.fetchall())]
+    indexes = [row[db_column_es_index] for row in cursor.fetchall()]
     logger.info(
-        f"Retrieved the following Elasticsearch indexes from database: {indexes}."
+        "Retrieved the following Elasticsearch indexes from database: %s.", indexes
     )
 
     return indexes
+
+
+@task
+def get_index_order(
+    indexes: list[str],
+    db_credentials: DatabaseCredentials,
+    db_table: str,
+    db_column_es_index: str = "index",
+):
+    logger = get_run_logger()
+    # Connect to Postgres
+    db_conn = get_postgres_connection(db_credentials)
+
+    # Create cursor
+    cursor = db_conn.cursor()
+
+    # Run query
+    indexes_list = ",".join(map(lambda index: f"'{index}'", indexes))
+    cursor.execute(
+        f"""
+        SELECT {db_column_es_index}, count(id)
+        FROM {db_table} 
+        WHERE {db_column_es_index} IN ({indexes_list})
+        GROUP BY {db_column_es_index} 
+        ORDER BY count(id) ASC;
+        """
+    )
+    logger.info("Retrieving order for Elasticsearch indexes %s from database.", indexes)
+
+    return cursor.fetchall()
 
 
 @task
@@ -102,6 +132,7 @@ def stream_records_to_es(
     es_retry_on_timeout: bool = True,
     timestamp: str = None,  # timestamp to uniquely identify indexes
     last_modified=None,
+    record_count=None,
 ):
     logger = get_run_logger()
 
@@ -171,8 +202,13 @@ def stream_records_to_es(
             errors += 1
             logger.error(item)
 
-        if records % 50 == 0:
-            logger.info(f"Indexed {records} records.")
+        if records % 100 == 0:
+            logger.info(
+                "Indexed %s of %s records (%s %).",
+                records,
+                record_count,
+                records / record_count * 100 if record_count is not None else "?",
+            )
 
     cursor.close()
     db_conn.close()
@@ -286,42 +322,52 @@ def main_flow(
                 es_credentials=es_credentials,
             )
 
-        t1 = create_indexes.submit(
+        # Determine order in which to load indexes
+        indexes_order = get_index_order.submit(
             indexes=quote(or_ids_to_run),
-            es_credentials=es_credentials,
-            timestamp=timestamp,
-        )
-
-        t2 = stream_records_to_es.with_options(
-            on_failure=[
-                partial(
-                    delete_indexes,
-                    indexes=or_ids_to_run,
-                    es_credentials=es_credentials,
-                    timestamp=timestamp,
-                )
-            ]
-        ).submit(
-            indexes=quote(or_ids_to_run),
-            es_credentials=es_credentials,
             db_credentials=db_credentials,
             db_table=db_table,
-            db_column_es_id=db_column_es_id,
             db_column_es_index=db_column_es_index,
-            db_batch_size=db_batch_size,
-            es_chunk_size=es_chunk_size,
-            es_request_timeout=es_request_timeout,
-            es_max_retries=es_max_retries,
-            es_retry_on_timeout=es_retry_on_timeout,
-            timestamp=timestamp,
-            wait_for=t1,
         )
-        swap_indexes.submit(
-            indexes=quote(or_ids_to_run),
-            es_credentials=es_credentials,
-            timestamp=timestamp,
-            wait_for=t2,
-        )
+
+        for index, record_count in indexes_order.result():
+
+            t1 = create_indexes.submit(
+                indexes=quote([index]),
+                es_credentials=es_credentials,
+                timestamp=timestamp,
+            )
+            t2 = stream_records_to_es.with_options(
+                on_failure=[
+                    partial(
+                        delete_indexes,
+                        indexes=[index],
+                        es_credentials=es_credentials,
+                        timestamp=timestamp,
+                    )
+                ]
+            ).submit(
+                indexes=quote([index]),
+                es_credentials=es_credentials,
+                db_credentials=db_credentials,
+                db_table=db_table,
+                db_column_es_id=db_column_es_id,
+                db_column_es_index=db_column_es_index,
+                db_batch_size=db_batch_size,
+                es_chunk_size=es_chunk_size,
+                es_request_timeout=es_request_timeout,
+                es_max_retries=es_max_retries,
+                es_retry_on_timeout=es_retry_on_timeout,
+                timestamp=timestamp,
+                record_count=record_count,
+                wait_for=t1,
+            )
+            swap_indexes.submit(
+                indexes=quote([index]),
+                es_credentials=es_credentials,
+                timestamp=timestamp,
+                wait_for=t2,
+            )
     else:
         stream_records_to_es.with_options(
             on_failure=[
