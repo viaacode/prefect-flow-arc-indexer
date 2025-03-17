@@ -180,29 +180,36 @@ def stream_records_to_es(
     )
 
 
+@task
+def delete_untouched_indexes(
+    indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
+):
+    es = es_credentials.get_client()
+
+    # delete all indexes that won't be touched
+    all_indexes = list(es.indices.get_alias(name="*").keys())
+    untouched_indexes = [
+        index for index in all_indexes if not any(alias in index for alias in indexes)
+    ]
+    delete_indexes(
+        None,
+        None,
+        None,
+        indexes=untouched_indexes,
+        es_credentials=es_credentials,
+        timestamp=timestamp,
+    )
+
+
 # Task to do changeover from old to new indexes when full sync
 @task
 def swap_indexes(
     indexes: list[str],
     es_credentials: ElasticsearchCredentials,
     timestamp: str,
-    delete_untouched_indexes: bool = True,
 ):
     logger = get_run_logger()
     es = es_credentials.get_client()
-
-    if delete_untouched_indexes:
-        # delete all indexes that won't be touched
-        all_indexes = list(es.indices.get_alias(name="*").keys())
-        untouched_indexes = [
-            index
-            for index in all_indexes
-            if not any(alias in index for alias in indexes)
-        ]
-        if len(untouched_indexes) > 0:
-            untouched_indexes_seq = ",".join(untouched_indexes)
-            logger.info(f"Deleting untouched indexes {untouched_indexes_seq}")
-            es.indices.delete(index=untouched_indexes_seq)
 
     for index in indexes:
         # get index connected to alias
@@ -267,11 +274,19 @@ def main_flow(
         # Get timestamp to uniquely identify indexes
         timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
 
+        # When there are indexes that are no longer part of the full sync, delete them
+        if use_all_indexes:
+            delete_untouched_indexes.submit(
+                indexes=quote(or_ids_to_run),
+                es_credentials=es_credentials,
+            )
+
         t1 = create_indexes.submit(
             indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             timestamp=timestamp,
         )
+
         t2 = stream_records_to_es.with_options(
             on_failure=[
                 partial(
@@ -300,7 +315,6 @@ def main_flow(
             indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             timestamp=timestamp,
-            delete_untouched_indexes=use_all_indexes,
             wait_for=t2,
         )
     else:
