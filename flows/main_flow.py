@@ -183,20 +183,26 @@ def stream_records_to_es(
 # Task to do changeover from old to new indexes when full sync
 @task
 def swap_indexes(
-    indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
+    indexes: list[str],
+    es_credentials: ElasticsearchCredentials,
+    timestamp: str,
+    delete_untouched_indexes: bool = True,
 ):
     logger = get_run_logger()
     es = es_credentials.get_client()
 
-    # delete all indexes that won't be touched
-    all_indexes = list(es.indices.get_alias(name="*").keys())
-    untouched_indexes = [
-        index for index in all_indexes if not any(alias in index for alias in indexes)
-    ]
-    if len(untouched_indexes) > 0:
-        untouched_indexes_seq = ",".join(untouched_indexes)
-        logger.info(f"Deleting untouched indexes {untouched_indexes_seq}")
-        es.indices.delete(index=untouched_indexes_seq)
+    if delete_untouched_indexes:
+        # delete all indexes that won't be touched
+        all_indexes = list(es.indices.get_alias(name="*").keys())
+        untouched_indexes = [
+            index
+            for index in all_indexes
+            if not any(alias in index for alias in indexes)
+        ]
+        if len(untouched_indexes) > 0:
+            untouched_indexes_seq = ",".join(untouched_indexes)
+            logger.info(f"Deleting untouched indexes {untouched_indexes_seq}")
+            es.indices.delete(index=untouched_indexes_seq)
 
     for index in indexes:
         # get index connected to alias
@@ -249,7 +255,8 @@ def main_flow(
     logger.info(f"Start indexing process (full sync = {full_sync})")
 
     # Get all indexes from database if none provided
-    if or_ids_to_run is None or len(or_ids_to_run) < 1:
+    use_all_indexes = or_ids_to_run is None or len(or_ids_to_run) < 1
+    if use_all_indexes:
         or_ids_to_run = get_indexes_list.submit(
             db_credentials=db_credentials,
             db_table=db_table,
@@ -293,6 +300,7 @@ def main_flow(
             indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             timestamp=timestamp,
+            delete_untouched_indexes=use_all_indexes,
             wait_for=t2,
         )
     else:
