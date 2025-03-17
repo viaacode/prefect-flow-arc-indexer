@@ -118,7 +118,7 @@ def stream_records_to_es(
     WHERE {db_column_es_index} IN ({indexes_list}) {suffix}
     """
 
-    logger.info(f"Creating cursor from query {sql_query}.")
+    logger.info("Creating cursor from query %s.", sql_query)
 
     # Connect to ES and Postgres
     db_conn = get_postgres_connection(db_credentials)
@@ -152,7 +152,9 @@ def stream_records_to_es(
             }
 
     logger.info(
-        f"Starting indexing stream of {cursor.rowcount} documents with timestamp {timestamp} and last modified {last_modified}."
+        "Starting indexing stream of documents with timestamp %s and last modified %s",
+        timestamp,
+        last_modified,
     )
 
     records = 0
@@ -176,7 +178,10 @@ def stream_records_to_es(
     db_conn.close()
 
     return logger.info(
-        f"Streaming records into Elasticsearch indexes {indexes_list} completed. {errors} of {records} records failed."
+        "Streaming records into Elasticsearch indexes %s completed. %s of %s records failed.",
+        indexes_list,
+        errors,
+        records,
     )
 
 
@@ -194,8 +199,10 @@ def delete_untouched_indexes(
     ]
     if len(untouched_indexes) > 0:
         untouched_indexes_seq = ",".join(untouched_indexes)
-        logger.info(f"Deleting untouched indexes {untouched_indexes_seq}")
+        logger.info("Deleting untouched indexes %s", {untouched_indexes_seq})
         es.indices.delete(index=untouched_indexes_seq)
+    else:
+        logger.info("No untouched indexes.")
 
 
 # Task to do changeover from old to new indexes when full sync
@@ -217,13 +224,13 @@ def swap_indexes(
         )
         # switch alias
         alias_name = f"{index}_{timestamp}"
-        logger.info(f"Switching alias {index} to new index {alias_name}.")
+        logger.info("Switching alias %s to new index %s.", index, alias_name)
         es.indices.put_alias(name=index, index=alias_name)
 
         # delete old indexes if there are any
         if len(old_indexes) > 0:
             old_indexes_seq = ",".join(old_indexes)
-            logger.info(f"Deleting old indexes {old_indexes_seq} for alias {index}")
+            logger.info("Deleting old indexes %s for alias %s", old_indexes_seq, index)
             es.indices.delete(index=old_indexes_seq)
 
     return logger.info("Elasticsearch indexes swapped succesfully.")
@@ -256,7 +263,7 @@ def main_flow(
     db_credentials = DatabaseCredentials.load(db_block_name)
 
     # Init task
-    logger.info(f"Start indexing process (full sync = {full_sync})")
+    logger.info("Start indexing process (full sync = %s)", full_sync)
 
     # Get all indexes from database if none provided
     use_all_indexes = or_ids_to_run is None or len(or_ids_to_run) < 1
