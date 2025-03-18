@@ -6,7 +6,6 @@ from prefect.testing.utilities import prefect_test_harness
 from prefect_meemoo.config.last_run import get_last_run_config, save_last_run_config
 from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
 from prefect_sqlalchemy.credentials import DatabaseCredentials
-from psycopg2.extras import RealDictCursor
 from functools import partial
 from datetime import datetime
 import os
@@ -26,7 +25,6 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
         host=postgres_credentials.host,
         port=postgres_credentials.port,
         database=postgres_credentials.database,
-        cursor_factory=RealDictCursor,
     )
     return db_conn
 
@@ -46,7 +44,7 @@ def get_indexes_list(
 
     # Run query
     cursor.execute(f"SELECT DISTINCT({db_column_es_index}) FROM {db_table};")
-    indexes = [row[db_column_es_index] for row in cursor.fetchall()]
+    indexes = [row[0] for row in cursor.fetchall()]
     logger.info(
         "Retrieved the following Elasticsearch indexes from database: %s.", indexes
     )
@@ -70,15 +68,15 @@ def get_index_order(
 
     # Run query
     indexes_list = ",".join(map(lambda index: f"'{index}'", indexes))
-    cursor.execute(
-        f"""
+    query = f"""
         SELECT {db_column_es_index}, count(id)
         FROM {db_table} 
         WHERE {db_column_es_index} IN ({indexes_list})
         GROUP BY {db_column_es_index} 
         ORDER BY count(id) ASC;
         """
-    )
+    cursor.execute(query)
+    logger.debug(query)
     logger.info("Retrieving order for Elasticsearch indexes %s from database.", indexes)
 
     return cursor.fetchall()
@@ -117,7 +115,7 @@ def delete_indexes(
 
 
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
-@task
+@task(tags=["pg-indexer"])
 def stream_records_to_es(
     indexes: list[str],
     es_credentials: ElasticsearchCredentials,
@@ -144,7 +142,7 @@ def stream_records_to_es(
     )
     indexes_list = ",".join(map(lambda index: f"'{index}'", indexes))
     sql_query = f"""
-    SELECT *
+    SELECT {db_column_es_index}, {db_column_es_id}, document, is_deleted
     FROM {db_table}
     WHERE {db_column_es_index} IN ({indexes_list}) {suffix}
     """
@@ -168,18 +166,13 @@ def stream_records_to_es(
 
     # Fill new indexes
     def generate_actions():
-        for record in cursor:
-            dict_record = dict(record)
-            index_name = (
-                f"{dict_record[db_column_es_index]}_{timestamp}"
-                if last_modified is None
-                else dict_record[db_column_es_index]
-            )
+        for index, id, document, is_deleted in cursor:
+            index_name = f"{index}_{timestamp}" if last_modified is None else index
             yield {
                 "_index": index_name,
-                "_id": (dict_record[db_column_es_id] if db_column_es_id else None),
-                "_source": dict_record["document"],
-                "_op_type": "delete" if dict_record["is_deleted"] else "index",
+                "_id": (id if db_column_es_id else None),
+                "_source": document,
+                "_op_type": "delete" if is_deleted else "index",
             }
 
     logger.info(
@@ -330,13 +323,14 @@ def main_flow(
             db_column_es_index=db_column_es_index,
         )
 
+        t1 = create_indexes.submit(
+            indexes=quote(or_ids_to_run),
+            es_credentials=es_credentials,
+            timestamp=timestamp,
+        )
+
         for index, record_count in indexes_order.result():
 
-            t1 = create_indexes.submit(
-                indexes=quote([index]),
-                es_credentials=es_credentials,
-                timestamp=timestamp,
-            )
             t2 = stream_records_to_es.with_options(
                 on_failure=[
                     partial(
