@@ -6,7 +6,6 @@ from prefect.testing.utilities import prefect_test_harness
 from prefect_meemoo.config.last_run import get_last_run_config, save_last_run_config
 from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
 from prefect_sqlalchemy.credentials import DatabaseCredentials
-from psycopg2.extras import RealDictCursor
 from functools import partial
 from datetime import datetime
 import os
@@ -26,7 +25,6 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
         host=postgres_credentials.host,
         port=postgres_credentials.port,
         database=postgres_credentials.database,
-        cursor_factory=RealDictCursor,
     )
     return db_conn
 
@@ -46,12 +44,42 @@ def get_indexes_list(
 
     # Run query
     cursor.execute(f"SELECT DISTINCT({db_column_es_index}) FROM {db_table};")
-    indexes = [row[db_column_es_index] for row in list(cursor.fetchall())]
+    indexes = [row[0] for row in cursor.fetchall()]
     logger.info(
-        f"Retrieved the following Elasticsearch indexes from database: {indexes}."
+        "Retrieved the following Elasticsearch indexes from database: %s.", indexes
     )
 
     return indexes
+
+
+@task
+def get_index_order(
+    indexes: list[str],
+    db_credentials: DatabaseCredentials,
+    db_table: str,
+    db_column_es_index: str = "index",
+):
+    logger = get_run_logger()
+    # Connect to Postgres
+    db_conn = get_postgres_connection(db_credentials)
+
+    # Create cursor
+    cursor = db_conn.cursor()
+
+    # Run query
+    indexes_list = ",".join(map(lambda index: f"'{index}'", indexes))
+    query = f"""
+        SELECT {db_column_es_index}, count(id)
+        FROM {db_table} 
+        WHERE {db_column_es_index} IN ({indexes_list})
+        GROUP BY {db_column_es_index} 
+        ORDER BY count(id) ASC;
+        """
+    cursor.execute(query)
+    logger.debug(query)
+    logger.info("Retrieving order for Elasticsearch indexes %s from database.", indexes)
+
+    return cursor.fetchall()
 
 
 @task
@@ -87,7 +115,7 @@ def delete_indexes(
 
 
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
-@task
+@task(tags=["pg-indexer"])
 def stream_records_to_es(
     indexes: list[str],
     es_credentials: ElasticsearchCredentials,
@@ -102,6 +130,7 @@ def stream_records_to_es(
     es_retry_on_timeout: bool = True,
     timestamp: str = None,  # timestamp to uniquely identify indexes
     last_modified=None,
+    record_count=None,
 ):
     logger = get_run_logger()
 
@@ -113,7 +142,7 @@ def stream_records_to_es(
     )
     indexes_list = ",".join(map(lambda index: f"'{index}'", indexes))
     sql_query = f"""
-    SELECT *
+    SELECT {db_column_es_index}, {db_column_es_id}, document, is_deleted
     FROM {db_table}
     WHERE {db_column_es_index} IN ({indexes_list}) {suffix}
     """
@@ -137,18 +166,13 @@ def stream_records_to_es(
 
     # Fill new indexes
     def generate_actions():
-        for record in cursor:
-            dict_record = dict(record)
-            index_name = (
-                f"{dict_record[db_column_es_index]}_{timestamp}"
-                if last_modified is None
-                else dict_record[db_column_es_index]
-            )
+        for index, id, document, is_deleted in cursor:
+            index_name = f"{index}_{timestamp}" if last_modified is None else index
             yield {
                 "_index": index_name,
-                "_id": (dict_record[db_column_es_id] if db_column_es_id else None),
-                "_source": dict_record["document"],
-                "_op_type": "delete" if dict_record["is_deleted"] else "index",
+                "_id": (id if db_column_es_id else None),
+                "_source": document,
+                "_op_type": "delete" if is_deleted else "index",
             }
 
     logger.info(
@@ -171,8 +195,13 @@ def stream_records_to_es(
             errors += 1
             logger.error(item)
 
-        if records % 50 == 0:
-            logger.info(f"Indexed {records} records.")
+        if records % 100 == 0:
+            logger.info(
+                "Indexed %s of %s records (%s %).",
+                records,
+                record_count,
+                records / record_count * 100 if record_count is not None else "?",
+            )
 
     cursor.close()
     db_conn.close()
@@ -286,42 +315,53 @@ def main_flow(
                 es_credentials=es_credentials,
             )
 
+        # Determine order in which to load indexes
+        indexes_order = get_index_order.submit(
+            indexes=quote(or_ids_to_run),
+            db_credentials=db_credentials,
+            db_table=db_table,
+            db_column_es_index=db_column_es_index,
+        )
+
         t1 = create_indexes.submit(
             indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             timestamp=timestamp,
         )
 
-        t2 = stream_records_to_es.with_options(
-            on_failure=[
-                partial(
-                    delete_indexes,
-                    indexes=or_ids_to_run,
-                    es_credentials=es_credentials,
-                    timestamp=timestamp,
-                )
-            ]
-        ).submit(
-            indexes=quote(or_ids_to_run),
-            es_credentials=es_credentials,
-            db_credentials=db_credentials,
-            db_table=db_table,
-            db_column_es_id=db_column_es_id,
-            db_column_es_index=db_column_es_index,
-            db_batch_size=db_batch_size,
-            es_chunk_size=es_chunk_size,
-            es_request_timeout=es_request_timeout,
-            es_max_retries=es_max_retries,
-            es_retry_on_timeout=es_retry_on_timeout,
-            timestamp=timestamp,
-            wait_for=t1,
-        )
-        swap_indexes.submit(
-            indexes=quote(or_ids_to_run),
-            es_credentials=es_credentials,
-            timestamp=timestamp,
-            wait_for=t2,
-        )
+        for index, record_count in indexes_order.result():
+
+            t2 = stream_records_to_es.with_options(
+                on_failure=[
+                    partial(
+                        delete_indexes,
+                        indexes=[index],
+                        es_credentials=es_credentials,
+                        timestamp=timestamp,
+                    )
+                ]
+            ).submit(
+                indexes=quote([index]),
+                es_credentials=es_credentials,
+                db_credentials=db_credentials,
+                db_table=db_table,
+                db_column_es_id=db_column_es_id,
+                db_column_es_index=db_column_es_index,
+                db_batch_size=db_batch_size,
+                es_chunk_size=es_chunk_size,
+                es_request_timeout=es_request_timeout,
+                es_max_retries=es_max_retries,
+                es_retry_on_timeout=es_retry_on_timeout,
+                timestamp=timestamp,
+                record_count=record_count,
+                wait_for=t1,
+            )
+            swap_indexes.submit(
+                indexes=quote([index]),
+                es_credentials=es_credentials,
+                timestamp=timestamp,
+                wait_for=t2,
+            )
     else:
         stream_records_to_es.with_options(
             on_failure=[
