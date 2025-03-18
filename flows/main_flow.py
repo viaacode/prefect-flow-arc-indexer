@@ -109,7 +109,7 @@ def delete_indexes(
     for index in indexes:
         index_name = f"{index}_{timestamp}"
         result = es.indices.delete(index=index_name)
-        logger.info(f"Deletion of Elasticsearch index {result}.")
+        logger.info("Deletion of Elasticsearch index %s: %s.", index_name, result)
 
     return logger.info("Cleanup of Elasticsearch indexes completed.")
 
@@ -195,7 +195,7 @@ def stream_records_to_es(
             errors += 1
             logger.error(item)
 
-        if records % 100 == 0:
+        if records % 50 == 0:
             logger.info(
                 "Indexed %s of %s records (%s %).",
                 records,
