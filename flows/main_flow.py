@@ -210,7 +210,6 @@ def stream_records_to_es(
             logger.error(item)
 
         if records % n == 0:
-            logger.info("test")
             logger.info(
                 "Indexed %s of %s records",
                 records,
