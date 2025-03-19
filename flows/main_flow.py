@@ -124,7 +124,12 @@ def generate_task_name():
 
 
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
-@task(task_run_name=generate_task_name, retries=1, tags=["pg-indexer"])
+@task(
+    task_run_name=generate_task_name,
+    retries=1,
+    retry_delay_seconds=30,
+    tags=["pg-indexer"],
+)
 def stream_records_to_es(
     indexes: list[str],
     es_credentials: ElasticsearchCredentials,
