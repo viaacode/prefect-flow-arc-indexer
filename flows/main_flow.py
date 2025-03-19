@@ -198,6 +198,14 @@ def stream_records_to_es(
 
     records = 0
     errors = 0
+
+    n = (
+        round(record_count / 10)
+        if record_count is not None
+        and record_count > 0
+        and round(record_count / 10) > 0
+        else 50
+    )
     for ok, item in streaming_bulk(
         es,
         generate_actions(),
@@ -210,11 +218,6 @@ def stream_records_to_es(
             errors += 1
             logger.error(item)
 
-        n = (
-            round(record_count / 10)
-            if record_count is not None and record_count > 0
-            else 50
-        )
         if records % n == 0:
             logger.info(
                 "Indexed %s of %s records (%s %).",
