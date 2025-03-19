@@ -205,7 +205,12 @@ def stream_records_to_es(
             errors += 1
             logger.error(item)
 
-        if records % 50 == 0:
+        n = (
+            round(record_count / 10)
+            if record_count is not None and record_count > 0
+            else 50
+        )
+        if records % n == 0:
             logger.info(
                 "Indexed %s of %s records (%s %).",
                 records,
