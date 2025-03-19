@@ -1,7 +1,6 @@
 import psycopg2
 from elasticsearch.helpers import streaming_bulk
 from prefect import flow, get_run_logger, task
-from prefect.runtime import flow_run, task_run
 from prefect.utilities.annotations import quote
 from prefect.testing.utilities import prefect_test_harness
 from prefect_meemoo.config.last_run import get_last_run_config, save_last_run_config
@@ -115,17 +114,8 @@ def delete_indexes(
     return logger.info("Cleanup of Elasticsearch indexes completed.")
 
 
-def generate_task_name():
-    parameters = task_run.parameters
-    task_name = task_run.task_name
-    indexes = ",".join(parameters["indexes"])
-
-    return f"{task_name}-{indexes})"
-
-
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
 @task(
-    task_run_name=generate_task_name,
     retries=1,
     retry_delay_seconds=30,
     tags=["pg-indexer"],
@@ -206,6 +196,7 @@ def stream_records_to_es(
         and round(record_count / 10) > 0
         else 50
     )
+
     for ok, item in streaming_bulk(
         es,
         generate_actions(),
@@ -219,11 +210,11 @@ def stream_records_to_es(
             logger.error(item)
 
         if records % n == 0:
+            logger.info("test")
             logger.info(
-                "Indexed %s of %s records (%s %).",
+                "Indexed %s of %s records",
                 records,
-                record_count,
-                records / record_count * 100 if record_count is not None else "?",
+                record_count if record_count is not None else "?",
             )
 
     cursor.close()
@@ -355,6 +346,7 @@ def main_flow(
         for index, record_count in indexes_order.result():
 
             t2 = stream_records_to_es.with_options(
+                name=f"indexing-{index}",
                 on_failure=[
                     partial(
                         delete_indexes,
@@ -362,7 +354,7 @@ def main_flow(
                         es_credentials=es_credentials,
                         timestamp=timestamp,
                     )
-                ]
+                ],
             ).submit(
                 indexes=quote([index]),
                 es_credentials=es_credentials,
@@ -377,9 +369,11 @@ def main_flow(
                 es_retry_on_timeout=es_retry_on_timeout,
                 timestamp=timestamp,
                 record_count=record_count,
-                wait_for=t1,
+                wait_for=[t1, indexes_order],
             )
-            swap_indexes.submit(
+            swap_indexes.with_options(
+                name=f"swap-index-{index}",
+            ).submit(
                 indexes=quote([index]),
                 es_credentials=es_credentials,
                 timestamp=timestamp,
