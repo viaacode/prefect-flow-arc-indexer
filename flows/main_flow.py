@@ -1,6 +1,7 @@
 import psycopg2
 from elasticsearch.helpers import streaming_bulk
 from prefect import flow, get_run_logger, task
+from prefect.runtime import flow_run, task_run
 from prefect.utilities.annotations import quote
 from prefect.testing.utilities import prefect_test_harness
 from prefect_meemoo.config.last_run import get_last_run_config, save_last_run_config
@@ -114,8 +115,21 @@ def delete_indexes(
     return logger.info("Cleanup of Elasticsearch indexes completed.")
 
 
+def generate_task_name():
+    parameters = task_run.parameters
+    task_name = task_run.task_name
+    indexes = ",".join(parameters["indexes"])
+
+    return f"{task_name}-{indexes})"
+
+
 # Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
-@task(tags=["pg-indexer"])
+@task(
+    task_run_name=generate_task_name,
+    retries=1,
+    retry_delay_seconds=30,
+    tags=["pg-indexer"],
+)
 def stream_records_to_es(
     indexes: list[str],
     es_credentials: ElasticsearchCredentials,
@@ -176,13 +190,22 @@ def stream_records_to_es(
             }
 
     logger.info(
-        "Starting indexing stream of documents with timestamp %s and last modified %s",
+        "Starting indexing stream of %s documents with timestamp %s and last modified %s",
+        record_count,
         timestamp,
         last_modified,
     )
 
     records = 0
     errors = 0
+
+    n = (
+        round(record_count / 10)
+        if record_count is not None
+        and record_count > 0
+        and round(record_count / 10) > 0
+        else 50
+    )
     for ok, item in streaming_bulk(
         es,
         generate_actions(),
@@ -195,7 +218,7 @@ def stream_records_to_es(
             errors += 1
             logger.error(item)
 
-        if records % 50 == 0:
+        if records % n == 0:
             logger.info(
                 "Indexed %s of %s records (%s %).",
                 records,
