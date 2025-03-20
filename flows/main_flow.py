@@ -84,13 +84,20 @@ def get_index_order(
 
 @task
 def create_indexes(
-    indexes: list[str], es_credentials: ElasticsearchCredentials, timestamp: str
+    indexes: list[str],
+    es_credentials: ElasticsearchCredentials,
+    timestamp: str,
+    timeout: int = 30,
 ):
     logger = get_run_logger()
     es = es_credentials.get_client()
     for index in indexes:
         index_name = f"{index}_{timestamp}"
-        result = es.indices.create(index=index_name)
+        result = es.indices.create(
+            index=index_name,
+            timeout=timeout,
+            settings={"refresh_interval": "-1"},
+        )
         logger.info(f"Created of Elasticsearch index {result}.")
 
     return logger.info("Creation of Elasticsearch indexes completed.")
@@ -218,7 +225,6 @@ def stream_records_to_es(
             logger.error(item)
 
         if records % n == 0:
-            logger.info("test")
             logger.info(
                 "Indexed %s of %s records",
                 records,
@@ -349,6 +355,7 @@ def main_flow(
             indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             timestamp=timestamp,
+            timeout=es_request_timeout,
         )
 
         for index, record_count in indexes_order.result():
