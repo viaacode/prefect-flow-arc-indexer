@@ -168,10 +168,28 @@ def stream_records_to_es(
     # Run query
     cursor.execute(sql_query)
 
+    # Stats
+    records = 0
+    errors = 0
+
+    n = (
+        round(record_count / 10)
+        if record_count is not None
+        and record_count > 0
+        and round(record_count / 10) > 0
+        else 50
+    )
+
     # Fill new indexes
     def generate_actions():
         for index, id, document, is_deleted in cursor:
             index_name = f"{index}_{timestamp}" if last_modified is None else index
+            logger.info(
+                "Attempt indexing %s (charlength: %s; bytesize: %s)",
+                records,
+                len(document),
+                len(document.encode("utf-8")),
+            )
             yield {
                 "_index": index_name,
                 "_id": (id if db_column_es_id else None),
@@ -186,17 +204,6 @@ def stream_records_to_es(
         last_modified,
     )
 
-    records = 0
-    errors = 0
-
-    n = (
-        round(record_count / 10)
-        if record_count is not None
-        and record_count > 0
-        and round(record_count / 10) > 0
-        else 50
-    )
-
     for ok, item in streaming_bulk(
         es,
         generate_actions(),
@@ -204,6 +211,7 @@ def stream_records_to_es(
         raise_on_error=False,
         raise_on_exception=False,
     ):
+        logger.info("Done indexing %s", records)
         records += 1
         if not ok:
             errors += 1
