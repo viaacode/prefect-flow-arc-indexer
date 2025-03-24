@@ -14,6 +14,7 @@ import json
 os.environ.update(PREFECT_LOGGING_LEVEL="DEBUG")
 
 
+# Helper function to create a connection to database
 def get_postgres_connection(postgres_credentials: DatabaseCredentials):
     """
     Function to get a postgres connection.
@@ -30,6 +31,7 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
     return db_conn
 
 
+# Task to get the indexes from database
 @task
 def get_indexes_list(
     db_credentials: DatabaseCredentials,
@@ -45,6 +47,7 @@ def get_indexes_list(
 
     # Run query
     cursor.execute(f"SELECT DISTINCT({db_column_es_index}) FROM {db_table};")
+    # unpack result
     indexes = [row[0] for row in cursor.fetchall()]
     logger.info(
         "Retrieved the following Elasticsearch indexes from database: %s.", indexes
@@ -53,6 +56,7 @@ def get_indexes_list(
     return indexes
 
 
+# Task to get the indexes ordered by the number of documents
 @task
 def get_index_order(
     indexes: list[str],
@@ -83,6 +87,7 @@ def get_index_order(
     return cursor.fetchall()
 
 
+# Task to create a list of indexes
 @task
 def create_indexes(
     indexes: list[str],
@@ -93,6 +98,8 @@ def create_indexes(
     es = es_credentials.get_client()
     for index in indexes:
         index_name = f"{index}_{timestamp}"
+
+        # create the index and disable the refresh for load
         result = es.indices.create(
             index=index_name,
             settings={"refresh_interval": "-1"},
@@ -102,6 +109,7 @@ def create_indexes(
     return logger.info("Creation of Elasticsearch indexes completed.")
 
 
+# Hook to delete all created indexes when stream task fails
 def delete_indexes(
     task,
     task_run,
@@ -120,7 +128,7 @@ def delete_indexes(
     return logger.info("Cleanup of Elasticsearch indexes completed.")
 
 
-# Function to get records from PostgreSQL using a cursor and stream to Elasticsearch
+# Task to get records from PostgreSQL using a cursor and stream to Elasticsearch
 @task(
     retries=1,
     retry_delay_seconds=30,
@@ -190,7 +198,7 @@ def stream_records_to_es(
     def generate_actions():
         for index, id, document, is_deleted in cursor:
             index_name = f"{index}_{timestamp}" if last_modified is None else index
-            logger.info(
+            logger.debug(
                 "Attempt indexing %s (charlength: %s)",
                 (id if db_column_es_id else None),
                 len(
@@ -243,6 +251,7 @@ def stream_records_to_es(
     )
 
 
+# Task to delete the indexes that dissapeared since since last full sync
 @task
 def delete_untouched_indexes(
     indexes: list[str], es_credentials: ElasticsearchCredentials
@@ -250,11 +259,13 @@ def delete_untouched_indexes(
     logger = get_run_logger()
     es = es_credentials.get_client()
 
-    # delete all indexes that won't be touched
+    # get a list of all indexes in cluster
     all_indexes = list(es.indices.get_alias(name="*").keys())
+    # find all untouched indexes by filtering the touched indexes from the list
     untouched_indexes = [
         index for index in all_indexes if not any(alias in index for alias in indexes)
     ]
+    # delete all indexes that won't be touched
     if len(untouched_indexes) > 0:
         untouched_indexes_seq = ",".join(untouched_indexes)
         logger.info("Deleting untouched indexes %s", {untouched_indexes_seq})
@@ -264,11 +275,12 @@ def delete_untouched_indexes(
 
 
 # Task to do changeover from old to new indexes when full sync
-@task
+@task(retries=1, retry_delay_seconds=30)
 def swap_indexes(
     indexes: list[str],
     es_credentials: ElasticsearchCredentials,
     timestamp: str,
+    es_timeout: int = 30,
 ):
     logger = get_run_logger()
     es = es_credentials.get_client()
@@ -284,10 +296,9 @@ def swap_indexes(
         alias_name = f"{index}_{timestamp}"
         logger.info("Switching alias %s to new index %s.", index, alias_name)
         es.indices.put_settings(
-            index=index,
-            settings={"refresh_interval": "30s"},
+            index=index, settings={"refresh_interval": "30s"}, timeout=f"{es_timeout}s"
         )
-        es.indices.put_alias(name=index, index=alias_name)
+        es.indices.put_alias(name=index, index=alias_name, timeout=f"{es_timeout}s")
 
         # delete old indexes if there are any
         if len(old_indexes) > 0:
@@ -362,7 +373,13 @@ def main_flow(
             timestamp=timestamp,
         )
 
-        for index, record_count in indexes_order.result():
+        indexes = indexes_order.result()
+        if len(indexes) != len(or_ids_to_run):
+            raise ValueError(
+                "The number of indexes does not match the number of ordered indexes."
+            )
+
+        for index, record_count in indexes:
 
             t2 = stream_records_to_es.with_options(
                 name=f"indexing-{index}",
@@ -396,6 +413,7 @@ def main_flow(
                 indexes=quote([index]),
                 es_credentials=es_credentials,
                 timestamp=timestamp,
+                es_timeout=es_request_timeout,
                 wait_for=t2,
             )
     else:
