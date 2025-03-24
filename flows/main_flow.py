@@ -87,7 +87,6 @@ def create_indexes(
     indexes: list[str],
     es_credentials: ElasticsearchCredentials,
     timestamp: str,
-    timeout: int = 30,
 ):
     logger = get_run_logger()
     es = es_credentials.get_client()
@@ -95,7 +94,6 @@ def create_indexes(
         index_name = f"{index}_{timestamp}"
         result = es.indices.create(
             index=index_name,
-            timeout=timeout,
             settings={"refresh_interval": "-1"},
         )
         logger.info(f"Created of Elasticsearch index {result}.")
@@ -355,7 +353,6 @@ def main_flow(
             indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             timestamp=timestamp,
-            timeout=es_request_timeout,
         )
 
         for index, record_count in indexes_order.result():
