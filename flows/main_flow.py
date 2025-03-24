@@ -190,19 +190,19 @@ def stream_records_to_es(
     def generate_actions():
         for index, id, document, is_deleted in cursor:
             index_name = f"{index}_{timestamp}" if last_modified is None else index
-            json_document = json.dumps(
-                document,
-            )
             logger.info(
-                "Attempt indexing %s (charlength: %s; bytesize: %s)",
-                records,
-                len(json_document),
-                len(json_document.encode("utf-8")),
+                "Attempt indexing %s (charlength: %s)",
+                (id if db_column_es_id else None),
+                len(
+                    json.dumps(
+                        document,
+                    )
+                ),
             )
             yield {
                 "_index": index_name,
                 "_id": (id if db_column_es_id else None),
-                "_source": document,
+                "_source": document if not is_deleted else None,
                 "_op_type": "delete" if is_deleted else "index",
             }
 
@@ -220,7 +220,6 @@ def stream_records_to_es(
         raise_on_error=False,
         raise_on_exception=False,
     ):
-        logger.info("Done indexing %s", records)
         records += 1
         if not ok:
             errors += 1
