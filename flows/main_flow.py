@@ -9,6 +9,7 @@ from prefect_sqlalchemy.credentials import DatabaseCredentials
 from functools import partial
 from datetime import datetime
 import os
+import json
 
 os.environ.update(PREFECT_LOGGING_LEVEL="DEBUG")
 
@@ -189,11 +190,14 @@ def stream_records_to_es(
     def generate_actions():
         for index, id, document, is_deleted in cursor:
             index_name = f"{index}_{timestamp}" if last_modified is None else index
+            json_document = json.dumps(
+                document,
+            )
             logger.info(
                 "Attempt indexing %s (charlength: %s; bytesize: %s)",
                 records,
-                len(document),
-                len(document.encode("utf-8")),
+                len(json_document),
+                len(json_document.encode("utf-8")),
             )
             yield {
                 "_index": index_name,
