@@ -318,7 +318,9 @@ def swap_indexes(
         alias_name = f"{index}_{timestamp}"
         logger.info("Switching alias %s to new index %s.", index, alias_name)
         es.indices.put_settings(
-            index=index, settings={"refresh_interval": "30s"}, timeout=f"{es_timeout}s"
+            index=alias_name,
+            settings={"refresh_interval": "30s"},
+            timeout=f"{es_timeout}s",
         )
         es.indices.put_alias(name=index, index=alias_name, timeout=f"{es_timeout}s")
 
