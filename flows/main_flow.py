@@ -31,6 +31,28 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
     return db_conn
 
 
+@task
+def refresh_view(
+    db_credentials: DatabaseCredentials,
+    db_table: str,
+):
+
+    logger = get_run_logger()
+    # Connect to Postgres
+    db_conn = get_postgres_connection(db_credentials)
+
+    # Create cursor
+    cursor = db_conn.cursor()
+
+    # Run query
+    try:
+        cursor.execute("REFRESH MATERIALIZED VIEW %s", (db_table,))
+
+        logger.info("Refreshed view %s.", db_table)
+    except psycopg2.ProgrammingError:
+        logger.info("Unable to refresh view %s.", db_table)
+
+
 # Task to get the indexes from database
 @task
 def get_indexes_list(
@@ -338,6 +360,12 @@ def main_flow(
     # Init task
     logger.info("Start indexing process (full sync = %s)", full_sync)
 
+    # Attempt view refresh
+    refresh = refresh_view.submit(
+        db_credentials=db_credentials,
+        db_table=db_table,
+    )
+
     # Get all indexes from database if none provided
     use_all_indexes = or_ids_to_run is None or len(or_ids_to_run) < 1
     if use_all_indexes:
@@ -345,6 +373,7 @@ def main_flow(
             db_credentials=db_credentials,
             db_table=db_table,
             db_column_es_index=db_column_es_index,
+            wait_for=refresh,
         ).result()
 
     # Get timestamp to uniquely identify indexes
@@ -357,6 +386,7 @@ def main_flow(
             delete_untouched_indexes.submit(
                 indexes=quote(or_ids_to_run),
                 es_credentials=es_credentials,
+                wait_for=refresh,
             )
 
         # Determine order in which to load indexes
@@ -365,12 +395,14 @@ def main_flow(
             db_credentials=db_credentials,
             db_table=db_table,
             db_column_es_index=db_column_es_index,
+            wait_for=refresh,
         )
 
         t1 = create_indexes.submit(
             indexes=quote(or_ids_to_run),
             es_credentials=es_credentials,
             timestamp=timestamp,
+            wait_for=refresh,
         )
 
         indexes = indexes_order.result()
@@ -436,6 +468,7 @@ def main_flow(
             db_batch_size=db_batch_size,
             es_chunk_size=es_chunk_size,
             last_modified=get_last_run_config("%Y-%m-%d"),
+            wait_for=refresh,
         )
 
 
