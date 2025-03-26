@@ -124,7 +124,7 @@ def create_indexes(
         # create the index and disable the refresh for load
         result = es.indices.create(
             index=index_name,
-            settings={"refresh_interval": "-1"},
+            settings={"refresh_interval": "-1", "number_of_replicas": 0},
         )
         logger.info(f"Created of Elasticsearch index {result}.")
 
@@ -319,7 +319,7 @@ def swap_indexes(
         logger.info("Switching alias %s to new index %s.", index, alias_name)
         es.indices.put_settings(
             index=alias_name,
-            settings={"refresh_interval": "30s"},
+            settings={"refresh_interval": "30s", "number_of_replicas": 1},
             timeout=f"{es_timeout}s",
         )
         es.indices.put_alias(name=index, index=alias_name, timeout=f"{es_timeout}s")
