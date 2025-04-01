@@ -45,7 +45,7 @@ def refresh_view(
 
     # Run query
     try:
-        query = sql.SQL("REFRESH MATERIALIZED VIEW {table};").format(
+        query = sql.SQL("REFRESH MATERIALIZED VIEW {table} WITH DATA;").format(
             table=sql.Identifier(*db_table.split("."))
         )
         logger.debug(query.as_string(db_conn))
