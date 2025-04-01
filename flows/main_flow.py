@@ -293,7 +293,7 @@ def stream_records_to_es(
 
     return logger.info(
         "Streaming records into Elasticsearch indexes %s completed. %s of %s records failed.",
-        indexes_list,
+        indexes,
         errors,
         records,
     )
