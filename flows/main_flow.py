@@ -212,7 +212,7 @@ def stream_records_to_es(
             db_table=sql.Identifier(*db_table.split(".")),
             db_column_es_id=sql.Identifier(db_column_es_id),
         )
-        logger.info("Creating cursor from query %s.", sql_query)
+        logger.info("Creating cursor from query %s.", sql_query.as_string(db_conn))
         cursor.execute(
             sql_query, {"indexes_list": tuple(indexes), "last_modified": last_modified}
         )
