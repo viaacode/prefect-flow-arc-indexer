@@ -46,8 +46,9 @@ def refresh_view(
     # Run query
     try:
         query = sql.SQL("REFRESH MATERIALIZED VIEW {table};").format(
-            table=sql.Identifier(db_table)
+            table=sql.Identifier(*db_table.split("."))
         )
+        logger.debug(query.as_string(db_conn))
         cursor.execute(query)
 
         logger.info("Refreshed view %s.", db_table)
@@ -72,9 +73,9 @@ def get_indexes_list(
     # Run query
     query = sql.SQL("SELECT DISTINCT({db_column_es_index}) FROM {db_table};").format(
         db_column_es_index=sql.Identifier(db_column_es_index),
-        db_table=sql.Identifier(db_table),
+        db_table=sql.Identifier(*db_table.split(".")),
     )
-    logger.debug(query)
+    logger.debug(query.as_string(db_conn))
     cursor.execute(query)
     # unpack result
     indexes = [row[0] for row in cursor.fetchall()]
@@ -111,10 +112,10 @@ def get_index_order(
         """
     ).format(
         db_column_es_index=sql.Identifier(db_column_es_index),
-        db_table=sql.Identifier(db_table),
+        db_table=sql.Identifier(*db_table.split(".")),
     )
+    logger.debug(query.as_string(db_conn))
     cursor.execute(query, {"indexes_list": tuple(indexes)})
-    logger.debug(query)
     logger.info("Retrieving order for Elasticsearch indexes %s from database.", indexes)
 
     return cursor.fetchall()
@@ -208,7 +209,7 @@ def stream_records_to_es(
             """
         ).format(
             db_column_es_index=sql.Identifier(db_column_es_index),
-            db_table=sql.Identifier(db_table),
+            db_table=sql.Identifier(*db_table.split(".")),
         )
         logger.info("Creating cursor from query %s.", sql_query)
         cursor.execute(
@@ -224,7 +225,7 @@ def stream_records_to_es(
             """
         ).format(
             db_column_es_index=sql.Identifier(db_column_es_index),
-            db_table=sql.Identifier(db_table),
+            db_table=sql.Identifier(*db_table.split(".")),
         )
         logger.info("Creating cursor from query %s.", sql_query)
         cursor.execute(sql_query, {"indexes_list": tuple(indexes)})
