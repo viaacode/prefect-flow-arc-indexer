@@ -427,13 +427,6 @@ def main_flow(
             wait_for=refresh,
         )
 
-        t1 = create_indexes.submit(
-            indexes=quote(or_ids_to_run),
-            es_credentials=es_credentials,
-            timestamp=timestamp,
-            wait_for=refresh,
-        )
-
         indexes = indexes_order.result()
         if len(indexes) != len(or_ids_to_run):
             raise ValueError(
@@ -441,6 +434,14 @@ def main_flow(
             )
 
         for index, record_count in indexes:
+            t1 = create_indexes.with_options(
+                name=f"creating-{index}",
+            ).submit(
+                indexes=quote([index]),
+                es_credentials=es_credentials,
+                timestamp=timestamp,
+                wait_for=indexes_order,
+            )
             t2 = stream_records_to_es.with_options(
                 name=f"indexing-{index}",
                 on_failure=[
@@ -465,7 +466,7 @@ def main_flow(
                 es_retry_on_timeout=es_retry_on_timeout,
                 timestamp=timestamp,
                 record_count=record_count,
-                wait_for=[t1, indexes_order],
+                wait_for=t1,
             )
             swap_indexes.with_options(
                 name=f"swap-index-{index}",
