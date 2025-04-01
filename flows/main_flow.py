@@ -210,6 +210,7 @@ def stream_records_to_es(
         ).format(
             db_column_es_index=sql.Identifier(db_column_es_index),
             db_table=sql.Identifier(*db_table.split(".")),
+            db_column_es_id=sql.Identifier(db_column_es_id),
         )
         logger.info("Creating cursor from query %s.", sql_query)
         cursor.execute(
@@ -226,6 +227,7 @@ def stream_records_to_es(
         ).format(
             db_column_es_index=sql.Identifier(db_column_es_index),
             db_table=sql.Identifier(*db_table.split(".")),
+            db_column_es_id=sql.Identifier(db_column_es_id),
         )
         logger.info("Creating cursor from query %s.", sql_query)
         cursor.execute(sql_query, {"indexes_list": tuple(indexes)})
