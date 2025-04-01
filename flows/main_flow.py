@@ -1,4 +1,3 @@
-import psycopg2
 from elasticsearch.helpers import streaming_bulk
 from prefect import flow, get_run_logger, task
 from prefect.utilities.annotations import quote
@@ -10,6 +9,7 @@ from functools import partial
 from datetime import datetime
 import os
 import json
+from psycopg2 import sql, connect, ProgrammingError
 
 os.environ.update(PREFECT_LOGGING_LEVEL="DEBUG")
 
@@ -21,7 +21,7 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
     """
     logger = get_run_logger()
     logger.info("(Re)connecting to postgres")
-    db_conn = psycopg2.connect(
+    db_conn = connect(
         user=postgres_credentials.username,
         password=postgres_credentials.password.get_secret_value(),
         host=postgres_credentials.host,
@@ -36,7 +36,6 @@ def refresh_view(
     db_credentials: DatabaseCredentials,
     db_table: str,
 ):
-
     logger = get_run_logger()
     # Connect to Postgres
     db_conn = get_postgres_connection(db_credentials)
@@ -46,11 +45,14 @@ def refresh_view(
 
     # Run query
     try:
-        cursor.execute("REFRESH MATERIALIZED VIEW %s", (db_table,))
+        query = sql.SQL("REFRESH MATERIALIZED VIEW {table};").format(
+            table=sql.Identifier(db_table)
+        )
+        cursor.execute(query)
 
         logger.info("Refreshed view %s.", db_table)
-    except psycopg2.ProgrammingError:
-        logger.info("Unable to refresh view %s.", db_table)
+    except ProgrammingError as e:
+        logger.info("Unable to refresh view %s.", db_table, e)
 
 
 # Task to get the indexes from database
@@ -68,7 +70,12 @@ def get_indexes_list(
     cursor = db_conn.cursor()
 
     # Run query
-    cursor.execute(f"SELECT DISTINCT({db_column_es_index}) FROM {db_table};")
+    query = sql.SQL("SELECT DISTINCT({db_column_es_index}) FROM {db_table};").format(
+        db_column_es_index=sql.Identifier(db_column_es_index),
+        db_table=sql.Identifier(db_table),
+    )
+    logger.debug(query)
+    cursor.execute(query)
     # unpack result
     indexes = [row[0] for row in cursor.fetchall()]
     logger.info(
@@ -94,15 +101,19 @@ def get_index_order(
     cursor = db_conn.cursor()
 
     # Run query
-    indexes_list = ",".join(map(lambda index: f"'{index}'", indexes))
-    query = f"""
+    query = sql.SQL(
+        """
         SELECT {db_column_es_index}, count(id)
         FROM {db_table} 
-        WHERE {db_column_es_index} IN ({indexes_list})
+        WHERE {db_column_es_index} IN %(indexes_list)s
         GROUP BY {db_column_es_index} 
         ORDER BY count(id) ASC;
         """
-    cursor.execute(query)
+    ).format(
+        db_column_es_index=sql.Identifier(db_column_es_index),
+        db_table=sql.Identifier(db_table),
+    )
+    cursor.execute(query, {"indexes_list": tuple(indexes)})
     logger.debug(query)
     logger.info("Retrieving order for Elasticsearch indexes %s from database.", indexes)
 
@@ -174,21 +185,6 @@ def stream_records_to_es(
 ):
     logger = get_run_logger()
 
-    # Compose SQL query
-
-    # Integrate last_modified when not None And if not, ignore deleted documents because full sync
-    suffix = (
-        f"AND updated_at >= {last_modified}" if last_modified else "AND NOT is_deleted"
-    )
-    indexes_list = ",".join(map(lambda index: f"'{index}'", indexes))
-    sql_query = f"""
-    SELECT {db_column_es_index}, {db_column_es_id}, document, is_deleted
-    FROM {db_table}
-    WHERE {db_column_es_index} IN ({indexes_list}) {suffix}
-    """
-
-    logger.info("Creating cursor from query %s.", sql_query)
-
     # Connect to ES and Postgres
     db_conn = get_postgres_connection(db_credentials)
     es = es_credentials.get_client().options(
@@ -201,8 +197,37 @@ def stream_records_to_es(
     cursor = db_conn.cursor(name="large_query_cursor")
     cursor.itersize = db_batch_size
 
-    # Run query
-    cursor.execute(sql_query)
+    # Compose and run query
+    if last_modified:
+        sql_query = sql.SQL(
+            """
+            SELECT {db_column_es_index}, {db_column_es_id}, document, is_deleted
+            FROM {db_table}
+            WHERE {db_column_es_index} IN %(indexes_list)s
+            AND updated_at >= %(last_modified)s"
+            """
+        ).format(
+            db_column_es_index=sql.Identifier(db_column_es_index),
+            db_table=sql.Identifier(db_table),
+        )
+        logger.info("Creating cursor from query %s.", sql_query)
+        cursor.execute(
+            sql_query, {"indexes_list": tuple(indexes), "last_modified": last_modified}
+        )
+    else:
+        sql_query = sql.SQL(
+            """
+            SELECT {db_column_es_index}, {db_column_es_id}, document, is_deleted
+            FROM {db_table}
+            WHERE {db_column_es_index} IN %(indexes_list)s 
+            AND NOT is_deleted
+            """
+        ).format(
+            db_column_es_index=sql.Identifier(db_column_es_index),
+            db_table=sql.Identifier(db_table),
+        )
+        logger.info("Creating cursor from query %s.", sql_query)
+        cursor.execute(sql_query, {"indexes_list": tuple(indexes)})
 
     # Stats
     records = 0
@@ -382,7 +407,6 @@ def main_flow(
     timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
 
     if full_sync:
-
         # When there are indexes that are no longer part of the full sync, delete them
         if use_all_indexes:
             delete_untouched_indexes.submit(
@@ -414,7 +438,6 @@ def main_flow(
             )
 
         for index, record_count in indexes:
-
             t2 = stream_records_to_es.with_options(
                 name=f"indexing-{index}",
                 on_failure=[
