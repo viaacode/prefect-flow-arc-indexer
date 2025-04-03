@@ -71,7 +71,9 @@ def get_indexes_list(
     cursor = db_conn.cursor()
 
     # Run query
-    query = sql.SQL("SELECT DISTINCT({db_column_es_index}) FROM {db_table};").format(
+    query = sql.SQL(
+        "SELECT DISTINCT {db_column_es_index} FROM {db_table} WHERE {db_column_es_index} is not null;"
+    ).format(
         db_column_es_index=sql.Identifier(db_column_es_index),
         db_table=sql.Identifier(*db_table.split(".")),
     )
