@@ -378,6 +378,7 @@ def main_flow(
     es_request_timeout: int = 30,
     es_max_retries: int = 10,
     es_retry_on_timeout: bool = True,
+    refresh_view: bool = True,
 ):
     """
     Flow to index all of the Hasura Postgres records.
@@ -393,9 +394,13 @@ def main_flow(
     logger.info("Start indexing process (full sync = %s)", full_sync)
 
     # Attempt view refresh
-    refresh = refresh_view.submit(
-        db_credentials=db_credentials,
-        db_table=db_table,
+    refresh = (
+        refresh_view.submit(
+            db_credentials=db_credentials,
+            db_table=db_table,
+        )
+        if refresh_view
+        else None
     )
 
     # Get all indexes from database if none provided
