@@ -32,7 +32,7 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
 
 
 @task
-def refresh_view(
+def refresh_index_view(
     db_credentials: DatabaseCredentials,
     db_table: str,
 ):
@@ -395,7 +395,7 @@ def main_flow(
 
     # Attempt view refresh
     refresh = (
-        refresh_view.submit(
+        refresh_index_view.submit(
             db_credentials=db_credentials,
             db_table=db_table,
         )
