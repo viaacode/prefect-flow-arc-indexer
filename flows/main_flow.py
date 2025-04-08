@@ -207,7 +207,7 @@ def stream_records_to_es(
             SELECT {db_column_es_index}, {db_column_es_id}, document, is_deleted
             FROM {db_table}
             WHERE {db_column_es_index} IN %(indexes_list)s
-            AND updated_at >= %(last_modified)s"
+            AND updated_at >= %(last_modified)s
             """
         ).format(
             db_column_es_index=sql.Identifier(db_column_es_index),
