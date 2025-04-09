@@ -31,6 +31,7 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
     return db_conn
 
 
+# Task to refresh the materialized view if there is one
 @task
 def refresh_index_view(
     db_credentials: DatabaseCredentials,
