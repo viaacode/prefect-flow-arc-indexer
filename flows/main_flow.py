@@ -169,7 +169,6 @@ def delete_indexes(
 @task(
     retries=1,
     retry_delay_seconds=30,
-    tags=["pg-indexer"],
 )
 def stream_records_to_es(
     indexes: list[str],
@@ -441,7 +440,7 @@ def main_flow(
                 "The number of indexes does not match the number of ordered indexes."
             )
 
-        for index, record_count in indexes:
+        for i, (index, record_count) in enumerate(indexes):
             t1 = create_indexes.with_options(
                 name=f"creating-{index}",
             ).submit(
@@ -459,6 +458,9 @@ def main_flow(
                         es_credentials=es_credentials,
                         timestamp=timestamp,
                     )
+                ],
+                tags=[
+                    "pg-indexer-large" if i > len(indexes) - 3 else "pg-indexer",
                 ],
             ).submit(
                 indexes=quote([index]),
