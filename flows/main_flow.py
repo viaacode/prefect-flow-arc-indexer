@@ -443,6 +443,9 @@ def main_flow(
         for i, (index, record_count) in enumerate(indexes):
             t1 = create_indexes.with_options(
                 name=f"creating-{index}",
+                tags=[
+                    "pg-indexer-create",
+                ],
             ).submit(
                 indexes=quote([index]),
                 es_credentials=es_credentials,
