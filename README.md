@@ -2,7 +2,6 @@
 
 Prefect flow to index documents from a postgres database in Elasticsearch for hetarchief.be. 
 
-
 ## Synopsis
 
 This flow runs the following tasks:
