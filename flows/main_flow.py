@@ -9,7 +9,7 @@ from functools import partial
 from datetime import datetime
 import os
 import json
-from psycopg2 import sql, connect, ProgrammingError
+from psycopg2 import sql, connect
 
 os.environ.update(PREFECT_LOGGING_LEVEL="DEBUG")
 
@@ -29,32 +29,6 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
         database=postgres_credentials.database,
     )
     return db_conn
-
-
-# Task to refresh the materialized view if there is one
-@task
-def refresh_index_view(
-    db_credentials: DatabaseCredentials,
-    db_table: str,
-):
-    logger = get_run_logger()
-    # Connect to Postgres
-    db_conn = get_postgres_connection(db_credentials)
-
-    # Create cursor
-    cursor = db_conn.cursor()
-
-    # Run query
-    try:
-        query = sql.SQL("REFRESH MATERIALIZED VIEW {table} WITH DATA;").format(
-            table=sql.Identifier(*db_table.split("."))
-        )
-        logger.debug(query.as_string(db_conn))
-        cursor.execute(query)
-
-        logger.info("Refreshed view %s.", db_table)
-    except ProgrammingError as e:
-        logger.info("Unable to refresh view %s.", db_table, e)
 
 
 # Task to get the indexes from database
@@ -367,8 +341,8 @@ def swap_indexes(
 @flow(name="prefect-flow-arc-indexer", on_completion=[save_last_run_config])
 def main_flow(
     db_block_name: str,
-    db_table: str,
     es_block_name: str,
+    db_table: str = "graph.index_documents",
     db_column_es_id: str = "id",
     db_column_es_index: str = "index",
     or_ids_to_run: list[str] = None,
@@ -378,7 +352,6 @@ def main_flow(
     es_request_timeout: int = 30,
     es_max_retries: int = 10,
     es_retry_on_timeout: bool = True,
-    refresh_view: bool = True,
 ):
     """
     Flow to index all of the Hasura Postgres records.
@@ -393,16 +366,6 @@ def main_flow(
     # Init task
     logger.info("Start indexing process (full sync = %s)", full_sync)
 
-    # Attempt view refresh
-    refresh = (
-        refresh_index_view.submit(
-            db_credentials=db_credentials,
-            db_table=db_table,
-        )
-        if refresh_view
-        else None
-    )
-
     # Get all indexes from database if none provided
     use_all_indexes = or_ids_to_run is None or len(or_ids_to_run) < 1
     if use_all_indexes:
@@ -410,7 +373,6 @@ def main_flow(
             db_credentials=db_credentials,
             db_table=db_table,
             db_column_es_index=db_column_es_index,
-            wait_for=refresh,
         ).result()
 
     # Get timestamp to uniquely identify indexes
@@ -422,7 +384,6 @@ def main_flow(
             delete_untouched_indexes.submit(
                 indexes=quote(or_ids_to_run),
                 es_credentials=es_credentials,
-                wait_for=refresh,
             )
 
         # Determine order in which to load indexes
@@ -431,7 +392,6 @@ def main_flow(
             db_credentials=db_credentials,
             db_table=db_table,
             db_column_es_index=db_column_es_index,
-            wait_for=refresh,
         )
 
         indexes = indexes_order.result()
@@ -510,7 +470,6 @@ def main_flow(
             db_batch_size=db_batch_size,
             es_chunk_size=es_chunk_size,
             last_modified=get_last_run_config("%Y-%m-%d"),
-            wait_for=refresh,
         )
 
 
