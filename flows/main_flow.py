@@ -1,4 +1,5 @@
 from elasticsearch.helpers import streaming_bulk
+from pendulum.datetime import DateTime
 from prefect import flow, get_run_logger, task
 from prefect.utilities.annotations import quote
 from prefect.testing.utilities import prefect_test_harness
@@ -345,7 +346,8 @@ def main_flow(
     db_table: str = "graph.index_documents",
     db_column_es_id: str = "id",
     db_column_es_index: str = "index",
-    or_ids_to_run: list[str] = None,
+    or_ids: list[str] = None,
+    last_modified: DateTime = None,
     full_sync: bool = False,
     db_batch_size: int = 1000,
     es_chunk_size: int = 500,
@@ -367,9 +369,9 @@ def main_flow(
     logger.info("Start indexing process (full sync = %s)", full_sync)
 
     # Get all indexes from database if none provided
-    use_all_indexes = or_ids_to_run is None or len(or_ids_to_run) < 1
+    use_all_indexes = or_ids is None or len(or_ids) < 1
     if use_all_indexes:
-        or_ids_to_run = get_indexes_list.submit(
+        or_ids = get_indexes_list.submit(
             db_credentials=db_credentials,
             db_table=db_table,
             db_column_es_index=db_column_es_index,
@@ -382,20 +384,20 @@ def main_flow(
         # When there are indexes that are no longer part of the full sync, delete them
         if use_all_indexes:
             delete_untouched_indexes.submit(
-                indexes=quote(or_ids_to_run),
+                indexes=quote(or_ids),
                 es_credentials=es_credentials,
             )
 
         # Determine order in which to load indexes
         indexes_order = get_index_order.submit(
-            indexes=quote(or_ids_to_run),
+            indexes=quote(or_ids),
             db_credentials=db_credentials,
             db_table=db_table,
             db_column_es_index=db_column_es_index,
         )
 
         indexes = indexes_order.result()
-        if len(indexes) != len(or_ids_to_run):
+        if len(indexes) != len(or_ids):
             raise ValueError(
                 "The number of indexes does not match the number of ordered indexes."
             )
@@ -455,13 +457,13 @@ def main_flow(
             on_failure=[
                 partial(
                     delete_indexes,
-                    indexes=or_ids_to_run,
+                    indexes=or_ids,
                     es_credentials=es_credentials,
                     timestamp=timestamp,
                 )
             ]
         ).submit(
-            indexes=quote(or_ids_to_run),
+            indexes=quote(or_ids),
             es_credentials=es_credentials,
             db_credentials=db_credentials,
             db_table=db_table,
@@ -469,7 +471,7 @@ def main_flow(
             db_column_es_index=db_column_es_index,
             db_batch_size=db_batch_size,
             es_chunk_size=es_chunk_size,
-            last_modified=get_last_run_config("%Y-%m-%d"),
+            last_modified=str(last_modified) if not full_sync else None,
         )
 
 
