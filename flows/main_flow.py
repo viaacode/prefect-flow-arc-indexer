@@ -3,7 +3,7 @@ from pendulum.datetime import DateTime
 from prefect import flow, get_run_logger, task
 from prefect.utilities.annotations import quote
 from prefect.testing.utilities import prefect_test_harness
-from prefect_meemoo.config.last_run import get_last_run_config, save_last_run_config
+from prefect_meemoo.config.last_run import save_last_run_config
 from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
 from prefect_sqlalchemy.credentials import DatabaseCredentials
 from functools import partial
@@ -158,8 +158,8 @@ def stream_records_to_es(
     es_max_retries: int = 10,
     es_retry_on_timeout: bool = True,
     timestamp: str = None,  # timestamp to uniquely identify indexes
-    last_modified=None,
-    record_count=None,
+    last_modified: DateTime = None,
+    record_count: int = None,
 ):
     logger = get_run_logger()
 
@@ -191,7 +191,8 @@ def stream_records_to_es(
         )
         logger.info("Creating cursor from query %s.", sql_query.as_string(db_conn))
         cursor.execute(
-            sql_query, {"indexes_list": tuple(indexes), "last_modified": last_modified}
+            sql_query,
+            {"indexes_list": tuple(indexes), "last_modified": str(last_modified)},
         )
     else:
         sql_query = sql.SQL(
@@ -471,7 +472,7 @@ def main_flow(
             db_column_es_index=db_column_es_index,
             db_batch_size=db_batch_size,
             es_chunk_size=es_chunk_size,
-            last_modified=str(last_modified) if not full_sync else None,
+            last_modified=last_modified if not full_sync else None,
         )
 
 
