@@ -255,6 +255,7 @@ def stream_records_to_es(
         chunk_size=es_chunk_size,
         raise_on_error=False,
         raise_on_exception=False,
+        max_retries=es_max_retries
     ):
         records += 1
         if not ok:
@@ -428,6 +429,7 @@ def main_flow(
                 tags=[
                     "pg-indexer-large" if i > len(indexes) - 3 else "pg-indexer",
                 ],
+                retries=3
             ).submit(
                 indexes=quote([index]),
                 es_credentials=es_credentials,
