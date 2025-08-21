@@ -255,6 +255,7 @@ def stream_records_to_es(
         chunk_size=es_chunk_size,
         raise_on_error=False,
         raise_on_exception=False,
+        max_retries=es_max_retries
     ):
         records += 1
         if not ok:
