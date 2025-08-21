@@ -428,6 +428,7 @@ def main_flow(
                 tags=[
                     "pg-indexer-large" if i > len(indexes) - 3 else "pg-indexer",
                 ],
+                retries=3
             ).submit(
                 indexes=quote([index]),
                 es_credentials=es_credentials,
