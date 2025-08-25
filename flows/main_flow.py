@@ -261,6 +261,7 @@ def stream_records_to_es(
 
     retries = 0
     last_row = 0  
+    current_batch_start = 0
     while True:
         try:
             if retries > es_max_retries:
@@ -276,7 +277,6 @@ def stream_records_to_es(
                 max_retries=es_max_retries
             ):
                 records += 1
-                last_row += 1
                 if not ok:
                     errors += 1
                     logger.error(item)
@@ -287,20 +287,21 @@ def stream_records_to_es(
                         records,
                         record_count if record_count is not None else "?",
                     )
+                if records % es_chunk_size == 0:
+                    last_row = current_batch_start
+                    current_batch_start = records
             break
-        except OperationalError as e:
+        # OperationalError and ConnectionTimeout are caught in one except to reconnect and resume the streaming_bulk
+        except (OperationalError, ConnectionTimeout) as e:
             logger.error("Error during streaming_bulk: %s", e)
-            logger.info("Reconnecting to Postgres and resuming streaming_bulk.")
+            logger.info("Reconnecting to Postgres and resuming streaming_bulk...")
             db_conn, cursor = connect_db()
             cursor.scroll(value=last_row, mode="absolute")
-            retries += 1
-            continue
-        except ConnectionTimeout as e:
-            logger.error("ConnectionTimeout during streaming_bulk: %s", e)
             logger.info("Reconnecting to Elasticsearch and resuming streaming_bulk.")
             es = connect_es()
             retries += 1
             continue
+
 
     cursor.close()
     db_conn.close()
