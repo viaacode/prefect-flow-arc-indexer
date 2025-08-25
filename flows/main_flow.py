@@ -272,7 +272,7 @@ def stream_records_to_es(
         if record_count is not None
         and record_count > 0
         and round(record_count / 10) > 0
-        else 50
+        else 1000
     )
 
     # Fill new indexes
