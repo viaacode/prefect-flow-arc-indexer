@@ -575,7 +575,7 @@ def main_flow(
             db_table=db_table,
             db_column_es_index=db_column_es_index,
             last_modified=last_modified,
-        )
+        ).result()
         final_step = stream_records_to_es.with_options(
             on_failure=[
                 partial(
