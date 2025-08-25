@@ -594,7 +594,7 @@ def main_flow(
             db_column_es_index=db_column_es_index,
             db_batch_size=db_batch_size,
             es_chunk_size=es_chunk_size,
-            record_count=count_total_updated,
+            record_count=count_total_updated_res,
             es_request_timeout=es_request_timeout,
             es_max_retries=es_max_retries,
             es_retry_on_timeout=es_retry_on_timeout,
