@@ -416,6 +416,43 @@ def swap_indexes(
 
     return logger.info("Elasticsearch indexes swapped succesfully.")
 
+@task
+def count_total_updated(
+    db_credentials: DatabaseCredentials,
+    db_table: str,
+    db_column_es_index: str = "index",
+    last_modified: DateTime = None,
+):
+    logger = get_run_logger()
+    # Connect to Postgres
+    db_conn = get_postgres_connection(db_credentials)
+
+    # Create cursor
+    cursor = db_conn.cursor()
+
+    # Run query
+    query = sql.SQL(
+        """
+        SELECT COUNT(id)
+        FROM {db_table} 
+        WHERE {db_column_es_index} is not null
+        AND updated_at >= %(last_modified)s;
+        """
+    ).format(
+        db_column_es_index=sql.Identifier(db_column_es_index),
+        db_table=sql.Identifier(*db_table.split(".")),
+    )
+    logger.debug(query.as_string(db_conn))
+    cursor.execute(query, {"last_modified": str(last_modified) if last_modified else "0001-01-01T00:00:00"})
+    count = cursor.fetchone()[0]
+    logger.info(
+        "Found %s records updated since %s in database table %s.",
+        count,
+        last_modified,
+        db_table,
+    )
+
+    return count
 
 # Define the Prefect flow
 @flow(name="prefect-flow-arc-indexer", on_completion=[save_last_run_config])
@@ -523,7 +560,7 @@ def main_flow(
                 record_count=record_count,
                 wait_for=t1,
             )
-            index_swap = swap_indexes.with_options(
+            final_step = swap_indexes.with_options(
                 name=f"swap-index-{index}",
             ).submit(
                 indexes=quote([index]),
@@ -533,7 +570,13 @@ def main_flow(
                 wait_for=t2,
             )
     else:
-        index_swap = stream_records_to_es.with_options(
+        count_total_updated_res = count_total_updated.submit(
+            db_credentials=db_credentials,
+            db_table=db_table,
+            db_column_es_index=db_column_es_index,
+            last_modified=last_modified,
+        )
+        final_step = stream_records_to_es.with_options(
             on_failure=[
                 partial(
                     delete_indexes,
@@ -551,7 +594,12 @@ def main_flow(
             db_column_es_index=db_column_es_index,
             db_batch_size=db_batch_size,
             es_chunk_size=es_chunk_size,
+            record_count=count_total_updated,
+            es_request_timeout=es_request_timeout,
+            es_max_retries=es_max_retries,
+            es_retry_on_timeout=es_retry_on_timeout,
             last_modified=last_modified if not full_sync else None,
+            wait_for=[count_total_updated_res],
         )
 
     compare_postgres_es_count.submit(
@@ -560,7 +608,7 @@ def main_flow(
         db_credentials=db_credentials,
         db_table=db_table,
         db_column_es_index=db_column_es_index,
-        wait_for=[index_swap],
+        wait_for=[final_step],
     )
 
 # Execute the flow
