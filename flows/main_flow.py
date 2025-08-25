@@ -306,11 +306,11 @@ def stream_records_to_es(
     last_row = 0  
     current_batch_start = 0
     while True:
+        if retries > es_max_retries:
+            raise Exception(
+                f"Maximum number of indexing retries {es_max_retries} reached."
+            )
         try:
-            if retries > es_max_retries:
-                raise Exception(
-                    f"Maximum number of indexing retries {es_max_retries} reached."
-                )
             for ok, item in streaming_bulk(
                 es,
                 generate_actions(),
@@ -338,12 +338,22 @@ def stream_records_to_es(
         except (OperationalError, ConnectionTimeout) as e:
             logger.error("Error during streaming_bulk: %s", e)
             logger.info("Reconnecting to Postgres and resuming streaming_bulk...")
+            try:
+                cursor.close()
+                db_conn.close()
+            except Exception as e:
+                pass
+            try:
+                es.transport.close()
+            except Exception as e:
+                pass
             db_conn, cursor = connect_db()
             cursor.scroll(value=last_row, mode="absolute")
             logger.info("Reconnecting to Elasticsearch and resuming streaming_bulk...")
             es = connect_es()
-            retries += 1
-            continue
+            records = last_row
+        retries += 1
+        continue
 
 
     cursor.close()
