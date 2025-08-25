@@ -140,6 +140,49 @@ def delete_indexes(
 
     return logger.info("Cleanup of Elasticsearch indexes completed.")
 
+@task
+def compare_postgres_es_count(
+    indexes: list[str],
+    es_credentials: ElasticsearchCredentials,
+    db_credentials: DatabaseCredentials,
+    db_table: str,
+    db_column_es_index: str = "index",
+):
+    logger = get_run_logger()
+    es = es_credentials.get_client()
+    db_conn = get_postgres_connection(db_credentials)
+    cursor = db_conn.cursor()
+
+    for index in indexes:
+        # Get count from Elasticsearch
+        es_count = es.count(index=index)["count"]
+        logger.info(f"Elasticsearch index {index} has {es_count} documents.")
+
+        # Get count from Postgres
+        query = sql.SQL(
+            """
+            SELECT COUNT(id)
+            FROM {db_table} 
+            WHERE {db_column_es_index} = %(index)s
+            AND NOT is_deleted;
+            """
+        ).format(
+            db_column_es_index=sql.Identifier(db_column_es_index),
+            db_table=sql.Identifier(*db_table.split(".")),
+        )
+        logger.debug(query.as_string(db_conn))
+        cursor.execute(query, {"index": index})
+        pg_count = cursor.fetchone()[0]
+        logger.info(f"Postgres table {db_table} has {pg_count} documents for index {index}.")
+
+        if es_count != pg_count:
+            logger.warning(f"Count mismatch for index {index}: Elasticsearch has {es_count}, Postgres has {pg_count}.")
+        else:
+            logger.info(f"Counts match for index {index}: both have {es_count} documents.")
+
+    cursor.close()
+    db_conn.close()
+
 
 # Task to get records from PostgreSQL using a cursor and stream to Elasticsearch
 @task(
@@ -297,7 +340,7 @@ def stream_records_to_es(
             logger.info("Reconnecting to Postgres and resuming streaming_bulk...")
             db_conn, cursor = connect_db()
             cursor.scroll(value=last_row, mode="absolute")
-            logger.info("Reconnecting to Elasticsearch and resuming streaming_bulk.")
+            logger.info("Reconnecting to Elasticsearch and resuming streaming_bulk...")
             es = connect_es()
             retries += 1
             continue
@@ -480,7 +523,7 @@ def main_flow(
                 record_count=record_count,
                 wait_for=t1,
             )
-            swap_indexes.with_options(
+            index_swap = swap_indexes.with_options(
                 name=f"swap-index-{index}",
             ).submit(
                 indexes=quote([index]),
@@ -490,7 +533,7 @@ def main_flow(
                 wait_for=t2,
             )
     else:
-        stream_records_to_es.with_options(
+        index_swap = stream_records_to_es.with_options(
             on_failure=[
                 partial(
                     delete_indexes,
@@ -511,6 +554,14 @@ def main_flow(
             last_modified=last_modified if not full_sync else None,
         )
 
+    compare_postgres_es_count.submit(
+        indexes=quote(or_ids),
+        es_credentials=es_credentials,
+        db_credentials=db_credentials,
+        db_table=db_table,
+        db_column_es_index=db_column_es_index,
+        wait_for=[index_swap],
+    )
 
 # Execute the flow
 if __name__ == "__main__":
