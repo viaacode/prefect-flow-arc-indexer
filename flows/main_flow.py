@@ -9,6 +9,7 @@ from prefect_meemoo.elasticsearch.credentials import ElasticsearchCredentials
 from prefect_sqlalchemy.credentials import DatabaseCredentials
 from functools import partial
 from datetime import datetime
+from time import sleep
 import os
 import json
 from psycopg2 import sql, connect, OperationalError
@@ -336,6 +337,7 @@ def stream_records_to_es(
             break
         # OperationalError and ConnectionTimeout are caught in one except to reconnect and resume the streaming_bulk
         except (OperationalError, ConnectionTimeout) as e:
+            sleep(120)
             logger.error("Error during streaming_bulk: %s", e)
             logger.info("Reconnecting to Postgres and resuming streaming_bulk...")
             try:
@@ -347,11 +349,17 @@ def stream_records_to_es(
                 es.transport.close()
             except Exception as e:
                 pass
-            db_conn, cursor = connect_db()
-            cursor.scroll(value=last_row, mode="absolute")
-            logger.info("Reconnecting to Elasticsearch and resuming streaming_bulk...")
-            es = connect_es()
-            records = last_row
+            try:
+                db_conn, cursor = connect_db()
+                cursor.scroll(value=last_row, mode="absolute")
+                logger.info("Reconnecting to Elasticsearch and resuming streaming_bulk...")
+                es = connect_es()
+                records = last_row
+            except Exception as e:
+                logger.error("Error reconnecting to Postgres or Elasticsearch: %s", e)
+                break
+        else:
+            break
         retries += 1
         continue
 
