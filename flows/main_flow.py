@@ -1,4 +1,5 @@
 from elasticsearch.helpers import streaming_bulk
+from elasticsearch.exceptions import ConnectionTimeout
 from pendulum.datetime import DateTime
 from prefect import flow, get_run_logger, task
 from prefect.utilities.annotations import quote
@@ -10,7 +11,7 @@ from functools import partial
 from datetime import datetime
 import os
 import json
-from psycopg2 import sql, connect
+from psycopg2 import sql, connect, OperationalError
 
 os.environ.update(PREFECT_LOGGING_LEVEL="DEBUG")
 
@@ -163,52 +164,61 @@ def stream_records_to_es(
 ):
     logger = get_run_logger()
 
-    # Connect to ES and Postgres
-    db_conn = get_postgres_connection(db_credentials)
-    es = es_credentials.get_client().options(
-        request_timeout=es_request_timeout,
-        max_retries=es_max_retries,
-        retry_on_timeout=es_retry_on_timeout,
-    )
+    
 
-    # Create server-side cursor
-    cursor = db_conn.cursor(name="large_query_cursor")
-    cursor.itersize = db_batch_size
+    def connect_es():
+        return es_credentials.get_client().options(
+            request_timeout=es_request_timeout,
+            max_retries=es_max_retries,
+            retry_on_timeout=es_retry_on_timeout,
+        )
 
-    # Compose and run query
-    if last_modified:
-        sql_query = sql.SQL(
-            """
-            SELECT {db_column_es_index}, {db_column_es_id}, document, is_deleted
-            FROM {db_table}
-            WHERE {db_column_es_index} IN %(indexes_list)s
-            AND updated_at >= %(last_modified)s
-            """
-        ).format(
-            db_column_es_index=sql.Identifier(db_column_es_index),
-            db_table=sql.Identifier(*db_table.split(".")),
-            db_column_es_id=sql.Identifier(db_column_es_id),
-        )
-        logger.info("Creating cursor from query %s.", sql_query.as_string(db_conn))
-        cursor.execute(
-            sql_query,
-            {"indexes_list": tuple(indexes), "last_modified": str(last_modified)},
-        )
-    else:
-        sql_query = sql.SQL(
-            """
-            SELECT {db_column_es_index}, {db_column_es_id}, document, is_deleted
-            FROM {db_table}
-            WHERE {db_column_es_index} IN %(indexes_list)s 
-            AND NOT is_deleted
-            """
-        ).format(
-            db_column_es_index=sql.Identifier(db_column_es_index),
-            db_table=sql.Identifier(*db_table.split(".")),
-            db_column_es_id=sql.Identifier(db_column_es_id),
-        )
-        logger.info("Creating cursor from query %s.", sql_query.as_string(db_conn))
-        cursor.execute(sql_query, {"indexes_list": tuple(indexes)})
+    es = connect_es()
+
+    def connect_db():
+        # Connect to ES and Postgres
+        db_conn = get_postgres_connection(db_credentials)
+        # Create server-side cursor
+        cursor = db_conn.cursor(name="large_query_cursor", scrollable=True)
+        cursor.itersize = db_batch_size
+
+        # Compose and run query
+        if last_modified:
+            sql_query = sql.SQL(
+                """
+                SELECT {db_column_es_index}, {db_column_es_id}, document, is_deleted
+                FROM {db_table}
+                WHERE {db_column_es_index} IN %(indexes_list)s
+                AND updated_at >= %(last_modified)s
+                """
+            ).format(
+                db_column_es_index=sql.Identifier(db_column_es_index),
+                db_table=sql.Identifier(*db_table.split(".")),
+                db_column_es_id=sql.Identifier(db_column_es_id),
+            )
+            logger.info("Creating cursor from query %s.", sql_query.as_string(db_conn))
+            cursor.execute(
+                sql_query,
+                {"indexes_list": tuple(indexes), "last_modified": str(last_modified)},
+            )
+        else:
+            sql_query = sql.SQL(
+                """
+                SELECT {db_column_es_index}, {db_column_es_id}, document, is_deleted
+                FROM {db_table}
+                WHERE {db_column_es_index} IN %(indexes_list)s 
+                AND NOT is_deleted
+                """
+            ).format(
+                db_column_es_index=sql.Identifier(db_column_es_index),
+                db_table=sql.Identifier(*db_table.split(".")),
+                db_column_es_id=sql.Identifier(db_column_es_id),
+            )
+            logger.info("Creating cursor from query %s.", sql_query.as_string(db_conn))
+            cursor.execute(sql_query, {"indexes_list": tuple(indexes)})
+        return db_conn, cursor
+        
+    db_conn, cursor = connect_db()
 
     # Stats
     records = 0
@@ -249,25 +259,48 @@ def stream_records_to_es(
         last_modified,
     )
 
-    for ok, item in streaming_bulk(
-        es,
-        generate_actions(),
-        chunk_size=es_chunk_size,
-        raise_on_error=False,
-        raise_on_exception=False,
-        max_retries=es_max_retries
-    ):
-        records += 1
-        if not ok:
-            errors += 1
-            logger.error(item)
+    retries = 0
+    last_row = 0  
+    while True:
+        try:
+            if retries > es_max_retries:
+                raise Exception(
+                    f"Maximum number of indexing retries {es_max_retries} reached."
+                )
+            for ok, item in streaming_bulk(
+                es,
+                generate_actions(),
+                chunk_size=es_chunk_size,
+                raise_on_error=False,
+                raise_on_exception=False,
+                max_retries=es_max_retries
+            ):
+                records += 1
+                last_row += 1
+                if not ok:
+                    errors += 1
+                    logger.error(item)
 
-        if records % n == 0:
-            logger.info(
-                "Indexed %s of %s records",
-                records,
-                record_count if record_count is not None else "?",
-            )
+                if records % n == 0:
+                    logger.info(
+                        "Indexed %s of %s records",
+                        records,
+                        record_count if record_count is not None else "?",
+                    )
+            break
+        except OperationalError as e:
+            logger.error("Error during streaming_bulk: %s", e)
+            logger.info("Reconnecting to Postgres and resuming streaming_bulk.")
+            db_conn, cursor = connect_db()
+            cursor.scroll(value=last_row, mode="absolute")
+            retries += 1
+            continue
+        except ConnectionTimeout as e:
+            logger.error("ConnectionTimeout during streaming_bulk: %s", e)
+            logger.info("Reconnecting to Elasticsearch and resuming streaming_bulk.")
+            es = connect_es()
+            retries += 1
+            continue
 
     cursor.close()
     db_conn.close()
