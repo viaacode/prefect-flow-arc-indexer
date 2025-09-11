@@ -513,7 +513,10 @@ def main_flow(
 
     # Get timestamp to uniquely identify indexes
     timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
-
+    if not or_ids:
+        logger.info('No indexes with changed records.')
+        return
+    
     if full_sync:
         # When there are indexes that are no longer part of the full sync, delete them
         if use_all_indexes:
