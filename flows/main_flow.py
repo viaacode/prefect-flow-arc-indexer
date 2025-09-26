@@ -47,10 +47,17 @@ def check_if_org_name_changed(
     db_conn = get_postgres_connection(db_credentials)
     cursor = db_conn.cursor()
 
-    # log mapping of index in es
-    mapping = es.indices.get_mapping(index=index)
-    logger.info(f"Elasticsearch index {index} mapping: {mapping}.")
     # get one 'schema_maintainer'->>'schema_name'  from index
+    resp = es.search(
+        index=index,
+        size=1,  # only one result
+        _source=["schema_maintainer.schema_name"],  # only fetch this field
+        query={"match_all": {}}  # no filtering, just grab any document
+    )
+    if resp['hits']['total']['value'] > 0:
+        logger.info(f"Elasticsearch index {index} has schema_name {resp['hits']['hits'][0]['_source']['schema_maintainer']['schema_name']}.")
+
+
     # if es.indices.exists(index=index):
     #     # query to get one schema_name from index
     #     es_query = {
