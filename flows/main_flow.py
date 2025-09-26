@@ -510,6 +510,8 @@ def main_flow(
             db_table=db_table,
             db_column_es_index=db_column_es_index,
         ).result()
+        
+    logger.info("Indexing the following Elasticsearch indexes: %s.", or_ids)
 
     # Get timestamp to uniquely identify indexes
     timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
