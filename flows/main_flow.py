@@ -617,7 +617,7 @@ def main_flow(
             db_credentials=db_credentials,
             db_table=db_table,
             db_column_es_index=db_column_es_index,
-        )
+        ).result()
         # Create timestamped index if full sync
         index_creation_result = create_indexes.with_options(
             name=f"creating-{index}",
