@@ -34,6 +34,40 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
     return db_conn
 
 
+@task
+def check_if_org_name_changed(
+    index: list[str],
+    es_credentials: ElasticsearchCredentials,
+    db_credentials: DatabaseCredentials,
+    db_table: str,
+    db_column_es_index: str = "index",
+):
+    logger = get_run_logger()
+    es = es_credentials.get_client()
+    db_conn = get_postgres_connection(db_credentials)
+    cursor = db_conn.cursor()
+
+    # log mapping of index in es
+    mapping = es.indices.get_mapping(index=index)
+    logger.info(f"Elasticsearch index {index} mapping: {mapping}.")
+    # get one 'schema_maintainer'->>'schema_name'  from index
+    # if es.indices.exists(index=index):
+    #     # query to get one schema_name from index
+    #     es_query = {
+    #         "size": 1,
+    #         "_source": ["schema_maintainer"],
+    #         "query": {"match_all": {}},
+    #     }
+    #     es_result = es.search(index=index, body=es_query)
+    #     if es_result["hits"]["total"]["value"] > 0:
+    #         es_schema_name = es_result["hits"]["hits"][0]["_source"][
+    #             "schema_maintainer"
+    #         ]["schema_name"]
+    #         logger.info(
+    #             f"Elasticsearch index {index} has schema_name {es_schema_name}."
+    #         )
+
+    
 # Task to get the indexes from database
 @task
 def get_indexes_list(
@@ -540,8 +574,19 @@ def main_flow(
         raise ValueError(
             "The number of indexes does not match the number of ordered indexes."
         )
+    
+    original_full_sync = full_sync
 
     for i, (index, record_count) in enumerate(indexes):
+        full_sync = original_full_sync
+
+        check_if_org_name_changed.submit(
+            index=quote(index),
+            es_credentials=es_credentials,
+            db_credentials=db_credentials,
+            db_table=db_table,
+            db_column_es_index=db_column_es_index,
+        )
         # Create timestamped index if full sync
         index_creation_result = create_indexes.with_options(
             name=f"creating-{index}",
