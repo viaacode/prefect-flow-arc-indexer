@@ -34,6 +34,69 @@ def get_postgres_connection(postgres_credentials: DatabaseCredentials):
     return db_conn
 
 
+@task
+def check_if_org_name_changed(
+    index: list[str],
+    es_credentials: ElasticsearchCredentials,
+    db_credentials: DatabaseCredentials,
+    db_table: str,
+    db_column_es_index: str = "index",
+) -> bool:
+    logger = get_run_logger()
+    es = es_credentials.get_client()
+    db_conn = get_postgres_connection(db_credentials)
+    cursor = db_conn.cursor()
+
+    # get one 'schema_maintainer'->>'schema_name'  from index
+    resp = es.search(
+        index=index,
+        size=1,  # only one result
+        _source=["schema_maintainer.schema_name"],  # only fetch this field
+        query={"match_all": {}}  # no filtering, just grab any document
+    )
+    if resp['hits']['total']['value'] > 0:
+        es_schema_name = resp['hits']['hits'][0]['_source']['schema_maintainer']['schema_name']
+        logger.info(f"Elasticsearch index {index} has schema_name {es_schema_name}.")
+
+    # get one 'schema_maintainer'->>'schema_name'  from Postgres
+    query = sql.SQL(
+        """
+        SELECT document->'schema_maintainer'->>'schema_name'
+        FROM {db_table} 
+        WHERE {db_column_es_index} = %(index)s
+        lIMIT 1;
+        """).format(
+            db_column_es_index=sql.Identifier(db_column_es_index),
+            db_table=sql.Identifier(*db_table.split(".")),
+        )
+    logger.debug(query.as_string(db_conn))
+    cursor.execute(query, {"index": index})
+    pg_schema_name = cursor.fetchone()[0]
+    logger.info(f"Postgres table {db_table} has schema_name {pg_schema_name} for index {index}.")
+    if es_schema_name != pg_schema_name:
+        logger.warning(f"Schema name changed for index {index}: Elasticsearch has {es_schema_name}, Postgres has {pg_schema_name}.")
+        return True
+    else:
+        logger.info(f"Schema names match for index {index}: both have {es_schema_name}.")
+        return False
+
+    # if es.indices.exists(index=index):
+    #     # query to get one schema_name from index
+    #     es_query = {
+    #         "size": 1,
+    #         "_source": ["schema_maintainer"],
+    #         "query": {"match_all": {}},
+    #     }
+    #     es_result = es.search(index=index, body=es_query)
+    #     if es_result["hits"]["total"]["value"] > 0:
+    #         es_schema_name = es_result["hits"]["hits"][0]["_source"][
+    #             "schema_maintainer"
+    #         ]["schema_name"]
+    #         logger.info(
+    #             f"Elasticsearch index {index} has schema_name {es_schema_name}."
+    #         )
+
+    
 # Task to get the indexes from database
 @task
 def get_indexes_list(
@@ -131,9 +194,13 @@ def delete_indexes(
     indexes: list[str],
     es_credentials: ElasticsearchCredentials,
     timestamp: str,
+    run : bool = True,
 ):
     logger = get_run_logger()
     es = es_credentials.get_client()
+    if not run:
+        return logger.info("Skipping deletion of Elasticsearch indexes.")
+    
     for index in indexes:
         index_name = f"{index}_{timestamp}"
         result = es.indices.delete(index=index_name)
@@ -502,112 +569,99 @@ def main_flow(
     # Init task
     logger.info("Start indexing process (full sync = %s)", full_sync)
 
-    # Get all indexes from database if none provided
-    use_all_indexes = or_ids is None or len(or_ids) < 1
-    if use_all_indexes:
-        or_ids = get_indexes_list.submit(
+    if not or_ids:
+        indexes = get_indexes_list.submit(
             db_credentials=db_credentials,
             db_table=db_table,
             db_column_es_index=db_column_es_index,
         ).result()
+    else:
+        indexes = [or_id.lower() for or_id in or_ids]
+
+    logger.info("Indexing the following Elasticsearch indexes: %s.", indexes)
 
     # Get timestamp to uniquely identify indexes
     timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
-    if not or_ids:
+    if not indexes:
         logger.info('No indexes with changed records.')
         return
     
     if full_sync:
         # When there are indexes that are no longer part of the full sync, delete them
-        if use_all_indexes:
+        if not or_ids:
             delete_untouched_indexes.submit(
-                indexes=quote(or_ids),
+                indexes=quote(indexes),
                 es_credentials=es_credentials,
             )
 
-        # Determine order in which to load indexes
-        indexes_order = get_index_order.submit(
-            indexes=quote(or_ids),
+    # Determine order in which to load indexes
+    indexes_order = get_index_order.submit(
+        indexes=quote(indexes),
+        db_credentials=db_credentials,
+        db_table=db_table,
+        db_column_es_index=db_column_es_index,
+    )
+
+    indexes = indexes_order.result()
+    if len(indexes) != len(indexes):
+        raise ValueError(
+            "The number of indexes does not match the number of ordered indexes."
+        )
+    
+
+    for i, (index, record_count) in enumerate(indexes):
+        # Check if org_name changed
+        org_name_changed = check_if_org_name_changed.submit(
+            index=quote(index),
+            es_credentials=es_credentials,
             db_credentials=db_credentials,
             db_table=db_table,
             db_column_es_index=db_column_es_index,
-        )
+        ).result()
+        # Create timestamped index if full sync
+        index_creation_result = create_indexes.with_options(
+            name=f"creating-{index}",
+            tags=[
+                "pg-indexer-create",
+            ],
+        ).submit(
+            indexes=quote([index]),
+            es_credentials=es_credentials,
+            timestamp=timestamp,
+            wait_for=[indexes_order, org_name_changed],
+        ) if full_sync or org_name_changed else None
 
-        indexes = indexes_order.result()
-        if len(indexes) != len(or_ids):
-            raise ValueError(
-                "The number of indexes does not match the number of ordered indexes."
-            )
-
-        for i, (index, record_count) in enumerate(indexes):
-            t1 = create_indexes.with_options(
-                name=f"creating-{index}",
-                tags=[
-                    "pg-indexer-create",
-                ],
-            ).submit(
-                indexes=quote([index]),
-                es_credentials=es_credentials,
-                timestamp=timestamp,
-                wait_for=indexes_order,
-            )
-            t2 = stream_records_to_es.with_options(
-                name=f"indexing-{index}",
-                on_failure=[
-                    partial(
-                        delete_indexes,
-                        indexes=[index],
-                        es_credentials=es_credentials,
-                        timestamp=timestamp,
-                    )
-                ],
-                tags=[
-                    "pg-indexer-large" if i > len(indexes) - 3 else "pg-indexer",
-                ],
-                retries=3
-            ).submit(
-                indexes=quote([index]),
-                es_credentials=es_credentials,
-                db_credentials=db_credentials,
-                db_table=db_table,
-                db_column_es_id=db_column_es_id,
-                db_column_es_index=db_column_es_index,
-                db_batch_size=db_batch_size,
-                es_chunk_size=es_chunk_size,
-                es_request_timeout=es_request_timeout,
-                es_max_retries=es_max_retries,
-                es_retry_on_timeout=es_retry_on_timeout,
-                timestamp=timestamp,
-                record_count=record_count,
-                wait_for=t1,
-            )
-            final_step = swap_indexes.with_options(
-                name=f"swap-index-{index}",
-            ).submit(
-                indexes=quote([index]),
-                es_credentials=es_credentials,
-                timestamp=timestamp,
-                es_timeout=es_request_timeout,
-                wait_for=t2,
-            )
-    else:
-        count_total_updated_res = count_total_updated.submit(
+        # Count total records to update if not full sync
+        record_count = count_total_updated.submit(
             db_credentials=db_credentials,
             db_table=db_table,
             db_column_es_index=db_column_es_index,
             last_modified=last_modified,
-        ).result()
-        final_step = stream_records_to_es.with_options(
+            wait_for=[org_name_changed],
+        ).result() if not full_sync and not org_name_changed else record_count
+
+        if record_count == 0:
+            logger.info(f"No records to update for index {index}. Skipping.")
+            continue
+        
+        # Stream records to ES
+        stream_records_result = stream_records_to_es.with_options(
+            name=f"indexing-{index}",
             on_failure=[
                 partial(
                     delete_indexes,
-                    indexes=or_ids,
+                    indexes=[index],
                     es_credentials=es_credentials,
                     timestamp=timestamp,
+                    run=full_sync or org_name_changed,
                 )
-            ]
+            ],
+            tags=[
+                "pg-indexer-large" if i > len(indexes) - 3 else "pg-indexer",
+            ],
+            retries=3
         ).submit(
-            indexes=quote(or_ids),
+            indexes=quote([index]),
             es_credentials=es_credentials,
             db_credentials=db_credentials,
             db_table=db_table,
@@ -615,22 +669,36 @@ def main_flow(
             db_column_es_index=db_column_es_index,
             db_batch_size=db_batch_size,
             es_chunk_size=es_chunk_size,
-            record_count=count_total_updated_res,
             es_request_timeout=es_request_timeout,
             es_max_retries=es_max_retries,
             es_retry_on_timeout=es_retry_on_timeout,
-            last_modified=last_modified if not full_sync else None,
-            wait_for=[count_total_updated_res],
+            # don't pass timestamp when incremental update
+            timestamp=timestamp if full_sync or org_name_changed else None,
+            record_count=record_count,
+            # don't pass last modified when full sync
+            last_modified=last_modified if not full_sync and not org_name_changed else None,
+            wait_for=[index_creation_result],
         )
+        # Swap time-stamped index to normal index if full sync
+        index_swapping = swap_indexes.with_options(
+            name=f"swap-index-{index}",
+        ).submit(
+            indexes=quote([index]),
+            es_credentials=es_credentials,
+            timestamp=timestamp,
+            es_timeout=es_request_timeout,
+            wait_for=stream_records_result,
+        ) if full_sync or org_name_changed else None
 
-    compare_postgres_es_count.submit(
-        indexes=quote(or_ids),
-        es_credentials=es_credentials,
-        db_credentials=db_credentials,
-        db_table=db_table,
-        db_column_es_index=db_column_es_index,
-        wait_for=[final_step],
-    )
+        # Compare counts between Postgres and ES
+        compare_postgres_es_count.submit(
+            indexes=quote([index]),
+            es_credentials=es_credentials,
+            db_credentials=db_credentials,
+            db_table=db_table,
+            db_column_es_index=db_column_es_index,
+            wait_for=[index_swapping, stream_records_result],
+        )
 
 # Execute the flow
 if __name__ == "__main__":
