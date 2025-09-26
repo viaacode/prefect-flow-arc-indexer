@@ -41,7 +41,7 @@ def check_if_org_name_changed(
     db_credentials: DatabaseCredentials,
     db_table: str,
     db_column_es_index: str = "index",
-):
+) -> bool:
     logger = get_run_logger()
     es = es_credentials.get_client()
     db_conn = get_postgres_connection(db_credentials)
@@ -55,8 +55,30 @@ def check_if_org_name_changed(
         query={"match_all": {}}  # no filtering, just grab any document
     )
     if resp['hits']['total']['value'] > 0:
-        logger.info(f"Elasticsearch index {index} has schema_name {resp['hits']['hits'][0]['_source']['schema_maintainer']['schema_name']}.")
+        es_schema_name = resp['hits']['hits'][0]['_source']['schema_maintainer']['schema_name']
+        logger.info(f"Elasticsearch index {index} has schema_name {es_schema_name}.")
 
+    # get one 'schema_maintainer'->>'schema_name'  from Postgres
+    query = sql.SQL(
+        """
+        SELECT document->'schema_maintainer'->>'schema_name'
+        FROM {db_table} 
+        WHERE {db_column_es_index} = %(index)s
+        lIMIT 1;
+        """).format(
+            db_column_es_index=sql.Identifier(db_column_es_index),
+            db_table=sql.Identifier(*db_table.split(".")),
+        )
+    logger.debug(query.as_string(db_conn))
+    cursor.execute(query, {"index": index})
+    pg_schema_name = cursor.fetchone()[0]
+    logger.info(f"Postgres table {db_table} has schema_name {pg_schema_name} for index {index}.")
+    if es_schema_name != pg_schema_name:
+        logger.warning(f"Schema name changed for index {index}: Elasticsearch has {es_schema_name}, Postgres has {pg_schema_name}.")
+        return True
+    else:
+        logger.info(f"Schema names match for index {index}: both have {es_schema_name}.")
+        return False
 
     # if es.indices.exists(index=index):
     #     # query to get one schema_name from index
@@ -172,9 +194,13 @@ def delete_indexes(
     indexes: list[str],
     es_credentials: ElasticsearchCredentials,
     timestamp: str,
+    run : bool = True,
 ):
     logger = get_run_logger()
     es = es_credentials.get_client()
+    if not run:
+        return logger.info("Skipping deletion of Elasticsearch indexes.")
+    
     for index in indexes:
         index_name = f"{index}_{timestamp}"
         result = es.indices.delete(index=index_name)
@@ -582,12 +608,10 @@ def main_flow(
             "The number of indexes does not match the number of ordered indexes."
         )
     
-    original_full_sync = full_sync
 
     for i, (index, record_count) in enumerate(indexes):
-        full_sync = original_full_sync
-
-        check_if_org_name_changed.submit(
+        # Check if org_name changed
+        org_name_changed = check_if_org_name_changed.submit(
             index=quote(index),
             es_credentials=es_credentials,
             db_credentials=db_credentials,
@@ -605,7 +629,7 @@ def main_flow(
             es_credentials=es_credentials,
             timestamp=timestamp,
             wait_for=indexes_order,
-        ) if full_sync else None
+        ) if full_sync or org_name_changed else None
 
         # Count total records to update if not full sync
         record_count = count_total_updated.submit(
@@ -613,7 +637,7 @@ def main_flow(
             db_table=db_table,
             db_column_es_index=db_column_es_index,
             last_modified=last_modified,
-        ).result() if not full_sync else record_count
+        ).result() if not full_sync and not org_name_changed else record_count
 
         if record_count == 0:
             logger.info(f"No records to update for index {index}. Skipping.")
@@ -628,6 +652,7 @@ def main_flow(
                     indexes=[index],
                     es_credentials=es_credentials,
                     timestamp=timestamp,
+                    run=full_sync or org_name_changed,
                 )
             ],
             tags=[
@@ -647,10 +672,10 @@ def main_flow(
             es_max_retries=es_max_retries,
             es_retry_on_timeout=es_retry_on_timeout,
             # don't pass timestamp when incremental update
-            timestamp=timestamp if full_sync else None,
+            timestamp=timestamp if full_sync or org_name_changed else None,
             record_count=record_count,
             # don't pass last modified when full sync
-            last_modified=last_modified if not full_sync else None,
+            last_modified=last_modified if not full_sync and not org_name_changed else None,
             wait_for=[index_creation_result],
         )
         # Swap time-stamped index to normal index if full sync
@@ -662,7 +687,7 @@ def main_flow(
             timestamp=timestamp,
             es_timeout=es_request_timeout,
             wait_for=stream_records_result,
-        ) if full_sync else None
+        ) if full_sync or org_name_changed else None
 
         # Compare counts between Postgres and ES
         compare_postgres_es_count.submit(
