@@ -628,7 +628,7 @@ def main_flow(
             indexes=quote([index]),
             es_credentials=es_credentials,
             timestamp=timestamp,
-            wait_for=indexes_order,
+            wait_for=[indexes_order, org_name_changed],
         ) if full_sync or org_name_changed else None
 
         # Count total records to update if not full sync
@@ -637,6 +637,7 @@ def main_flow(
             db_table=db_table,
             db_column_es_index=db_column_es_index,
             last_modified=last_modified,
+            wait_for=[org_name_changed],
         ).result() if not full_sync and not org_name_changed else record_count
 
         if record_count == 0:
