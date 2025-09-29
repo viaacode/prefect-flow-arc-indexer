@@ -656,9 +656,7 @@ def main_flow(
                     run=full_sync or org_name_changed,
                 )
             ],
-            tags=[
-                "pg-indexer-large" if i > len(indexes) - 3 else "pg-indexer",
-            ],
+            tags= ["pg-indexer-large", "pg-indexer"] if i > len(indexes) - 3 else ["pg-indexer"],
             retries=3
         ).submit(
             indexes=quote([index]),
