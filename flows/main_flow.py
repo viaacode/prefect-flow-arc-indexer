@@ -47,6 +47,11 @@ def check_if_org_name_changed(
     db_conn = get_postgres_connection(db_credentials)
     cursor = db_conn.cursor()
 
+    # check if index exists
+    if not es.indices.exists(index=index):
+        logger.info(f"Elasticsearch index {index} does not exist. Assuming org_name changed.")
+        return True
+
     # get one 'schema_maintainer'->>'schema_name'  from index
     resp = es.search(
         index=index,
