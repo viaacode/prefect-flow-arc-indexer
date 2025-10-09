@@ -256,6 +256,15 @@ def compare_postgres_es_count(
     cursor.close()
     db_conn.close()
 
+# Task to get all current indexes in Elasticsearch
+@task
+def get_current_es_indexes(es_credentials: ElasticsearchCredentials):
+    logger = get_run_logger()
+    es = es_credentials.get_client()
+    # get a list of all indexes in cluster
+    all_indexes = list(es.indices.get_alias(name="*").keys())
+    logger.info("Current Elasticsearch indexes in cluster: %s", all_indexes)
+    return all_indexes
 
 # Task to get records from PostgreSQL using a cursor and stream to Elasticsearch
 @task(
@@ -291,7 +300,6 @@ def stream_records_to_es(
             max_retries=es_max_retries,
             retry_on_timeout=es_retry_on_timeout,
         )
-
     es = connect_es()
 
     def connect_db():
@@ -594,6 +602,8 @@ def main_flow(
         indexes = [or_id.lower() for or_id in or_ids]
 
     logger.info("Indexing the following Elasticsearch indexes: %s.", indexes)
+    current_indexes = get_current_es_indexes.submit(es_credentials=es_credentials)
+
 
     # Get timestamp to uniquely identify indexes
     timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
