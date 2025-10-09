@@ -361,12 +361,19 @@ def stream_records_to_es(
                     )
                 ),
             )
-            yield {
-                "_index": index_name,
-                "_id": (id if db_column_es_id else None),
-                "_source": document if not is_deleted else None,
-                "_op_type": "delete" if is_deleted else "index",
-            }
+            if is_deleted:
+                yield {
+                    "_index": index_name,
+                    "_id": (id if db_column_es_id else None),
+                    "_op_type": "delete"
+                }
+            else:
+                yield {
+                    "_index": index_name,
+                    "_id": (id if db_column_es_id else None),
+                    "_source": document,
+                    "_op_type": "index",
+                }
 
     logger.info(
         "Starting indexing stream of %s documents with timestamp %s and last modified %s",
