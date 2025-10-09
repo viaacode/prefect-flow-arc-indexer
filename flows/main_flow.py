@@ -280,7 +280,10 @@ def stream_records_to_es(
 ):
     logger = get_run_logger()
 
-    
+    logger.info(
+        "Starting streaming of records to Elasticsearch indexes %s with timestamp %s and last modified %s",
+        indexes, timestamp if timestamp else "None", last_modified if last_modified else "None"
+    )
 
     def connect_es():
         return es_credentials.get_client().options(
