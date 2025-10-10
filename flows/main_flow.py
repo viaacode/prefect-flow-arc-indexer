@@ -263,7 +263,10 @@ def get_current_es_indexes(es_credentials: ElasticsearchCredentials):
     es = es_credentials.get_client()
     # get a list of all indexes in cluster
     all_indexes = list(es.indices.get_alias(name="*").keys())
+    # get a list of all no alias
+    all_no_alias_indexes = list(es.indices.get(index="*"))
     logger.info("Current Elasticsearch indexes in cluster: %s", all_indexes)
+    logger.info("Current Elasticsearch indexes not using alias in cluster: %s", all_no_alias_indexes)
     return all_indexes
 
 # Task to get records from PostgreSQL using a cursor and stream to Elasticsearch
@@ -472,13 +475,15 @@ def stream_records_to_es(
 
 # Task to delete the indexes that dissapeared since since last full sync
 @task
-def delete_untouched_indexes(
+def cleanup_indexes(
     indexes: list[str], es_credentials: ElasticsearchCredentials
 ):
     logger = get_run_logger()
     es = es_credentials.get_client()
 
     # get a list of all indexes in cluster
+    aliases = es.indices.get_alias(name="*")
+    logger.info("Current Elasticsearch indexes in cluster with aliases: %s", aliases)
     all_indexes = list(es.indices.get_alias(name="*").keys())
     # find all untouched indexes by filtering the touched indexes from the list
     untouched_indexes = [
@@ -617,7 +622,7 @@ def main_flow(
         return
     
     if not or_ids:
-        delete_untouched_indexes.submit(
+        cleanup_indexes.submit(
             indexes=quote(indexes_from_db),
             es_credentials=es_credentials,
         )
