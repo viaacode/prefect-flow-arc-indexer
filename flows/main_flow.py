@@ -498,7 +498,7 @@ def cleanup_indexes(
     duplicate_alias_indexes = [
         index for index in all_indexes if any(alias in index for alias in multiple_aliases)
     ]
-    logger.info("Indexes with multiple aliases: %s", duplicate_alias_indexes)
+    logger.info("Indexes that have duplicate aliases: %s", duplicate_alias_indexes)
         
     # delete all indexes that won't be touched
     if len(untouched_indexes) > 0:
@@ -700,7 +700,7 @@ def main_flow(
                     run=full_sync or org_name_changed,
                 )
             ],
-            tags= ["pg-indexer-large", "pg-indexer"] if i > len(indexes_from_db) - 3 else ["pg-indexer"],
+            tags= ["pg-indexer-large"] if i > len(indexes_from_db) - 3 else ["pg-indexer"],
             retries=3
         ).submit(
             indexes=quote([index]),
