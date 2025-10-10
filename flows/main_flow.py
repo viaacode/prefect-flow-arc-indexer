@@ -373,6 +373,11 @@ def stream_records_to_es(
                 ),
             )
             if is_deleted:
+                logger.info({
+                    "_index": index_name,
+                    "_id": (id if db_column_es_id else None),
+                    "_op_type": "delete"
+                })
                 yield {
                     "_index": index_name,
                     "_id": (id if db_column_es_id else None),
