@@ -593,48 +593,46 @@ def main_flow(
     logger.info("Start indexing process (full sync = %s)", full_sync)
 
     if not or_ids:
-        indexes = get_indexes_list.submit(
+        indexes_from_db = get_indexes_list.submit(
             db_credentials=db_credentials,
             db_table=db_table,
             db_column_es_index=db_column_es_index,
         ).result()
     else:
-        indexes = [or_id.lower() for or_id in or_ids]
+        indexes_from_db = [or_id.lower() for or_id in or_ids]
 
-    logger.info("Indexing the following Elasticsearch indexes: %s.", indexes)
+    logger.info("Indexing the following Elasticsearch indexes: %s.", indexes_from_db)
     current_indexes = get_current_es_indexes.submit(es_credentials=es_credentials)
 
 
     # Get timestamp to uniquely identify indexes
     timestamp = datetime.now().strftime("%Y-%m-%dt%H.%M.%S")
-    if not indexes:
+    if not indexes_from_db:
         logger.info('No indexes with changed records.')
         return
     
-    if full_sync:
-        # When there are indexes that are no longer part of the full sync, delete them
-        if not or_ids:
-            delete_untouched_indexes.submit(
-                indexes=quote(indexes),
-                es_credentials=es_credentials,
-            )
+    if not or_ids:
+        delete_untouched_indexes.submit(
+            indexes=quote(indexes_from_db),
+            es_credentials=es_credentials,
+        )
 
     # Determine order in which to load indexes
     indexes_order = get_index_order.submit(
-        indexes=quote(indexes),
+        indexes=quote(indexes_from_db),
         db_credentials=db_credentials,
         db_table=db_table,
         db_column_es_index=db_column_es_index,
     )
 
-    indexes = indexes_order.result()
-    if len(indexes) != len(indexes):
+    indexes_from_db = indexes_order.result()
+    if len(indexes_from_db) != len(indexes_from_db):
         raise ValueError(
             "The number of indexes does not match the number of ordered indexes."
         )
     
 
-    for i, (index, record_count) in enumerate(indexes):
+    for i, (index, record_count) in enumerate(indexes_from_db):
         # Check if org_name changed
         org_name_changed = check_if_org_name_changed.submit(
             index=quote(index),
@@ -681,7 +679,7 @@ def main_flow(
                     run=full_sync or org_name_changed,
                 )
             ],
-            tags= ["pg-indexer-large", "pg-indexer"] if i > len(indexes) - 3 else ["pg-indexer"],
+            tags= ["pg-indexer-large", "pg-indexer"] if i > len(indexes_from_db) - 3 else ["pg-indexer"],
             retries=3
         ).submit(
             indexes=quote([index]),
