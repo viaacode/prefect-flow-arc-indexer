@@ -483,7 +483,7 @@ def cleanup_indexes(
 
     # get a list of all indexes in cluster
     raw_all_indexes = es.indices.get(index="*")
-    logger.debug("Raw indexes info from cluster: %s", raw_all_indexes)
+    logger.info("Raw indexes info from cluster: %s", raw_all_indexes)
     aliases = es.indices.get_alias(name="*")
     logger.info("Current Elasticsearch indexes in cluster with aliases: %s", aliases)
     all_indexes = list(es.indices.get_alias(name="*").keys())
