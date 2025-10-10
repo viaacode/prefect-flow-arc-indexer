@@ -482,15 +482,24 @@ def cleanup_indexes(
     es = es_credentials.get_client()
 
     # get a list of all indexes in cluster
-    raw_all_indexes = es.indices.get(index="*")
-    logger.info("Raw indexes info from cluster: %s", raw_all_indexes)
     aliases = es.indices.get_alias(name="*")
-    logger.info("Current Elasticsearch indexes in cluster with aliases: %s", aliases)
     all_indexes = list(es.indices.get_alias(name="*").keys())
     # find all untouched indexes by filtering the touched indexes from the list
     untouched_indexes = [
         index for index in all_indexes if not any(alias in index for alias in indexes)
     ]
+    # get indexes of aliases that occur more than once
+    alias_counts = {}
+    for index, alias_info in aliases.items():
+        for alias in alias_info.get("aliases", {}).keys():
+            alias_counts[alias] = alias_counts.get(alias, 0) + 1
+    multiple_aliases = [alias for alias, count in alias_counts.items() if count > 1]
+    # filter all indexes to keep indexes that are part of aliases that occur more than once
+    duplicate_alias_indexes = [
+        index for index in all_indexes if any(alias in index for alias in multiple_aliases)
+    ]
+    logger.info("Indexes with multiple aliases: %s", duplicate_alias_indexes)
+        
     # delete all indexes that won't be touched
     if len(untouched_indexes) > 0:
         untouched_indexes_seq = ",".join(untouched_indexes)
