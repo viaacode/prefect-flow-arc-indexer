@@ -571,10 +571,12 @@ def count_total_updated(
     ).format(
         db_column_es_index=sql.Identifier(db_column_es_index),
         db_table=sql.Identifier(*db_table.split(".")),
-        index=sql.Literal(index),
     )
     logger.debug(query.as_string(db_conn))
-    cursor.execute(query, {"last_modified": str(last_modified) if last_modified else "0001-01-01T00:00:00"})
+    cursor.execute(query, {
+        "last_modified": str(last_modified) if last_modified else "0001-01-01T00:00:00",
+        "index": index,
+    })
     count = cursor.fetchone()[0]
     logger.info(
         "Found %s records updated since %s in database table %s.",
