@@ -579,10 +579,11 @@ def count_total_updated(
     })
     count = cursor.fetchone()[0]
     logger.info(
-        "Found %s records updated since %s in database table %s.",
+        "Found %s records updated since %s in database table %s for index: %s.",
         count,
         last_modified,
         db_table,
+        index,
     )
 
     return count
