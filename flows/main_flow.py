@@ -550,6 +550,7 @@ def count_total_updated(
     db_credentials: DatabaseCredentials,
     db_table: str,
     db_column_es_index: str = "index",
+    index: str = None,
     last_modified: DateTime = None,
 ):
     logger = get_run_logger()
@@ -564,7 +565,7 @@ def count_total_updated(
         """
         SELECT COUNT(id)
         FROM {db_table} 
-        WHERE {db_column_es_index} is not null
+        WHERE {db_column_es_index} = %(index)s
         AND updated_at >= %(last_modified)s;
         """
     ).format(
@@ -572,13 +573,17 @@ def count_total_updated(
         db_table=sql.Identifier(*db_table.split(".")),
     )
     logger.debug(query.as_string(db_conn))
-    cursor.execute(query, {"last_modified": str(last_modified) if last_modified else "0001-01-01T00:00:00"})
+    cursor.execute(query, {
+        "last_modified": str(last_modified) if last_modified else "0001-01-01T00:00:00",
+        "index": index,
+    })
     count = cursor.fetchone()[0]
     logger.info(
-        "Found %s records updated since %s in database table %s.",
+        "Found %s records updated since %s in database table %s for index: %s.",
         count,
         last_modified,
         db_table,
+        index,
     )
 
     return count
