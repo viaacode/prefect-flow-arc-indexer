@@ -686,6 +686,7 @@ def main_flow(
             db_table=db_table,
             db_column_es_index=db_column_es_index,
             last_modified=last_modified,
+            index=index,
             wait_for=[org_name_changed],
         ).result() if not full_sync and not org_name_changed else record_count
 
