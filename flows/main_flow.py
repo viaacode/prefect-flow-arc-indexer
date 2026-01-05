@@ -604,6 +604,7 @@ def main_flow(
     es_request_timeout: int = 30,
     es_max_retries: int = 10,
     es_retry_on_timeout: bool = True,
+    run_large_indexer_parallel: bool = False,
 ):
     """
     Flow to index all of the Hasura Postgres records.
@@ -706,7 +707,7 @@ def main_flow(
                     run=full_sync or org_name_changed,
                 )
             ],
-            tags= ["pg-indexer-large"] if i > len(indexes_from_db) - 3 else ["pg-indexer"],
+            tags= ["pg-indexer-large"] if i > len(indexes_from_db) - 3 and run_large_indexer_parallel else ["pg-indexer"],
             retries=3
         ).submit(
             indexes=quote([index]),
