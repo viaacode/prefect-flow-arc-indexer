@@ -1,5 +1,5 @@
 from elasticsearch.helpers import streaming_bulk
-from elasticsearch.exceptions import ConnectionTimeout
+from elasticsearch.exceptions import ConnectionTimeout, ConnectionError
 from pendulum.datetime import DateTime
 from prefect import flow, get_run_logger, task
 from prefect.utilities.annotations import quote
@@ -434,7 +434,7 @@ def stream_records_to_es(
                     current_batch_start = records
             break
         # OperationalError and ConnectionTimeout are caught in one except to reconnect and resume the streaming_bulk
-        except (OperationalError, ConnectionTimeout) as e:
+        except (OperationalError, ConnectionTimeout, ConnectionError) as e:
             sleep(120)
             logger.error("Error during streaming_bulk: %s", e)
             logger.info("Reconnecting to Postgres and resuming streaming_bulk...")
@@ -708,7 +708,8 @@ def main_flow(
                 )
             ],
             tags= ["pg-indexer-large"] if i > len(indexes_from_db) - 3 and run_large_indexer_parallel else ["pg-indexer"],
-            retries=3
+            retries=5,
+            retry_delay_seconds=500
         ).submit(
             indexes=quote([index]),
             es_credentials=es_credentials,
