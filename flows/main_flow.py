@@ -443,6 +443,12 @@ def stream_records_to_es(
             if es_chunk_size > 50:
                 es_chunk_size = es_chunk_size - 50
                 logger.info("Reducing es_chunk_size to %s", es_chunk_size)
+            elif es_chunk_size > 10:
+                es_chunk_size = es_chunk_size - 10
+                logger.info("Reducing es_chunk_size to %s", es_chunk_size)
+            elif es_chunk_size > 1:
+                es_chunk_size = es_chunk_size - 1
+                logger.info("Reducing es_chunk_size to %s", es_chunk_size)
             try:
                 cursor.close()
                 db_conn.close()
