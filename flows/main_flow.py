@@ -416,7 +416,9 @@ def stream_records_to_es(
                 chunk_size=es_chunk_size,
                 raise_on_error=False,
                 raise_on_exception=False,
-                max_retries=es_max_retries
+                max_retries=es_max_retries,
+                initial_backoff=30,
+                max_backoff=200,
             ):
                 records += 1
                 if not ok:
@@ -438,6 +440,9 @@ def stream_records_to_es(
             sleep(120)
             logger.error("Error during streaming_bulk: %s", e)
             logger.info("Reconnecting to Postgres and resuming streaming_bulk...")
+            if es_chunk_size > 50:
+                es_chunk_size = es_chunk_size - 50
+                logger.info("Reducing es_chunk_size to %s", es_chunk_size)
             try:
                 cursor.close()
                 db_conn.close()
